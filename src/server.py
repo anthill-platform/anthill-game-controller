@@ -36,6 +36,9 @@ class GameControllerServer(common.server.Server):
     def get_internal_handler(self):
         return h.InternalHandler(self)
 
+    def token_cache_enabled(self):
+        return False
+
     def get_models(self):
         return [self.gs, self.rooms, self.delivery, self.heartbeat]
 

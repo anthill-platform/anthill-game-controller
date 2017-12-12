@@ -19,7 +19,7 @@ define("listen",
        type=str)
 
 define("name",
-       default="game-ctl",
+       default="game_controller",
        help="Service short name. Used to discover by discovery service.",
        type=str)
 

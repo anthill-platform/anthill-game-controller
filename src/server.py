@@ -56,6 +56,7 @@ class GameControllerServer(common.server.Server):
     def get_gs_host(self):
         return self.gs_host
 
+
 if __name__ == "__main__":
     stt = common.server.init()
     common.access.AccessToken.init([common.access.public()])

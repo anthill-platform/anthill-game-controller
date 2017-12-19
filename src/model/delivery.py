@@ -10,6 +10,7 @@ import os
 import hashlib
 import zipfile
 import stat
+from shutil import rmtree
 
 
 class DeliveryError(Exception):
@@ -24,7 +25,7 @@ class DeliveryError(Exception):
 class Delivery(object):
     executor = ThreadPoolExecutor(max_workers=4)
 
-    def __init__(self, binaries_path, game_name, game_version, deployment_id, deployment_hash):
+    def __init__(self, binaries_path, game_name, game_version, deployment_id, deployment_hash=None):
         self.binaries_path = binaries_path
 
         self.deployment_hash_local = hashlib.sha256()
@@ -35,6 +36,8 @@ class Delivery(object):
         self.deployment_id = deployment_id
         self.deployment_hash = deployment_hash
         self.deployment_path = None
+
+        self.__init_paths__()
 
     @run_on_executor
     def data_received(self, chunk):
@@ -112,8 +115,39 @@ class Delivery(object):
                 st = os.stat(f_name)
                 os.chmod(f_name, st.st_mode | stat.S_IEXEC)
 
-    @coroutine
-    def init(self):
+    @run_on_executor
+    def delete(self):
+        app_runtime_path = os.path.join(
+            self.binaries_path, GameServersModel.RUNTIME,
+            self.game_name, self.game_version, str(self.deployment_id))
+
+        try:
+            if os.path.isfile(self.deployment_path):
+                os.remove(self.deployment_path)
+        except OSError as e:
+            if e.errno != 2:
+                raise DeliveryError(500, "Failed to delete deployment {0}/{1}/{2}: {3}".format(
+                    self.game_name, self.game_version, self.deployment_id, str(e)
+                ))
+        except Exception as e:
+            raise DeliveryError(500, "Failed to delete deployment {0}/{1}/{2}: {3}".format(
+                self.game_name, self.game_version, self.deployment_id, str(e)
+            ))
+
+        try:
+            if os.path.isdir(app_runtime_path):
+                rmtree(app_runtime_path)
+        except OSError as e:
+            if e.errno != 2:
+                raise DeliveryError(500, "Failed to delete deployment {0}/{1}/{2}: {3}".format(
+                    self.game_name, self.game_version, self.deployment_id, str(e)
+                ))
+        except Exception as e:
+            raise DeliveryError(500, "Failed to delete deployment {0}/{1}/{2}: {3}".format(
+                self.game_name, self.game_version, self.deployment_id, str(e)
+            ))
+
+    def __init_paths__(self):
         deployments_path = os.path.join(self.binaries_path, GameServersModel.DEPLOYMENTS)
 
         if not os.path.isdir(deployments_path):
@@ -148,6 +182,8 @@ class Delivery(object):
             self.binaries_path, GameServersModel.DEPLOYMENTS, self.game_name, self.game_version,
             str(self.deployment_id) + ".zip")
 
+    @coroutine
+    def init(self):
         try:
             self.deployment_file = open(self.deployment_path, "w")
         except Exception as e:
@@ -166,3 +202,7 @@ class DeliveryModel(Model):
         delivery = Delivery(self.binaries_path, game_name, game_version, deployment_id, deployment_hash)
         yield delivery.init()
         raise Return(delivery)
+
+    def delete(self, game_name, game_version, deployment_id):
+        delivery = Delivery(self.binaries_path, game_name, game_version, deployment_id)
+        return delivery.delete()

@@ -45,7 +45,8 @@ class GameControllerServer(common.server.Server):
             (r"/terminate", h.TerminateHandler),
             (r"/execute_stdin", h.ExecuteStdInHandler),
             (r"/heartbeat", h.HeartbeatHandler),
-            (r"/@deliver_deployment", h.DeliverDeploymentHandler)
+            (r"/game/(.+)/(.+)/deployments/(.+)/deliver", h.DeliverDeploymentHandler),
+            (r"/game/(.+)/(.+)/deployments/(.+)", h.DeploymentHandler)
         ]
 
     def get_admin_stream(self):

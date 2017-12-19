@@ -17,6 +17,18 @@ class InternalHandler(object):
         self.application = application
 
 
+class DeploymentHandler(AuthenticatedHandler):
+    @coroutine
+    @internal
+    def delete(self, game_name, game_version, deployment_id):
+        delivery = self.application.delivery
+
+        try:
+            yield delivery.delete(game_name, game_version, deployment_id)
+        except DeliveryError as e:
+            raise HTTPError(e.code, e.message)
+
+
 @stream_request_body
 class DeliverDeploymentHandler(AuthenticatedHandler):
     def __init__(self, application, request, **kwargs):
@@ -25,7 +37,7 @@ class DeliverDeploymentHandler(AuthenticatedHandler):
 
     @coroutine
     @internal
-    def put(self):
+    def put(self, *args, **kwargs):
         try:
             yield self.delivery.complete()
         except DeliveryError as e:
@@ -42,10 +54,7 @@ class DeliverDeploymentHandler(AuthenticatedHandler):
 
     @coroutine
     @internal
-    def prepared(self, *args, **kwargs):
-        game_name = self.get_argument("game_name")
-        game_version = self.get_argument("game_version")
-        deployment_id = self.get_argument("deployment_id")
+    def prepared(self, game_name, game_version, deployment_id, *args, **kwargs):
         deployment_hash = self.get_argument("deployment_hash")
 
         delivery = self.application.delivery

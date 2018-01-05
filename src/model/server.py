@@ -4,11 +4,11 @@ from tornado.gen import coroutine, Return, sleep, with_timeout, Task, TimeoutErr
 from tornado.ioloop import PeriodicCallback
 from tornado.concurrent import run_on_executor
 from concurrent.futures import ThreadPoolExecutor
+from tornado.process import Subprocess
 
 import tornado.ioloop
 
 import os
-import asyncproc
 import logging
 import signal
 import msg
@@ -241,14 +241,16 @@ class GameServer(object):
         self.set_status(GameServer.STATUS_INITIALIZING)
 
         try:
-            self.pipe = asyncproc.Process(cmd, shell=True, cwd=path, preexec_fn=os.setsid, env=env)
+            self.pipe = Subprocess(cmd, shell=True, cwd=path, preexec_fn=os.setsid, env=env,
+                                   stdin=Subprocess.STREAM, stdout=Subprocess.STREAM, stderr=Subprocess.STREAM)
         except OSError as e:
             reason = u"Failed to spawn a server: " + e.args[1]
             self.__notify__(reason)
-            yield self.crashed(reason)
+            yield self.crashed(reason, exitcode=e.errno)
 
             raise SpawnError(reason)
         else:
+            self.pipe.set_exit_callback(self.__exit_callback__)
             self.set_status(GameServer.STATUS_LOADING)
             self.read_cb.start()
 
@@ -297,13 +299,23 @@ class GameServer(object):
 
     @coroutine
     def send_stdin(self, data):
-        self.pipe.write(data.encode('ascii', 'ignore') + "\n")
+        self.pipe.stdin.write(data.encode('ascii', 'ignore') + "\n")
 
     # noinspection PyBroadException
     @run_on_executor
-    def __kill__(self, code):
+    def __kill__(self):
         try:
-            self.pipe.kill(code)
+            os.killpg(os.getpgid(self.pipe.proc.pid), signal.SIGKILL)
+        except Exception as e:
+            return str(e)
+        else:
+            return None
+
+    # noinspection PyBroadException
+    @run_on_executor
+    def __terminate__(self):
+        try:
+            os.killpg(os.getpgid(self.pipe.proc.pid), signal.SIGTERM)
         except Exception as e:
             return str(e)
         else:
@@ -313,7 +325,7 @@ class GameServer(object):
     def terminate(self, kill=False):
         self.__notify__(u"Terminating... (kill={0})".format(kill))
 
-        kill_proc = self.__kill__(signal.SIGKILL if kill else signal.SIGTERM)
+        kill_proc = self.__kill__() if kill else self.__terminate__()
 
         try:
             error = yield with_timeout(datetime.timedelta(seconds=GameServer.TERMINATE_TIMEOUT), kill_proc)
@@ -321,7 +333,7 @@ class GameServer(object):
             self.__notify__(u"Terminate timeout.")
 
             if kill:
-                yield self.__stopped__()
+                yield self.__stopped__(exitcode=999)
             else:
                 yield self.terminate(kill=True)
         else:
@@ -342,37 +354,27 @@ class GameServer(object):
         if self.status == GameServer.STATUS_STOPPED:
             return
 
-        err_data = self.pipe.readerr()
+        err_data = self.pipe.stderr.read_from_fd()
         if err_data:
             self.__notify__(err_data)
 
-        str_data = self.pipe.read()
+        str_data = self.pipe.stdout.read_from_fd()
         if str_data:
             self.__notify__(str_data)
 
-        # noinspection PyBroadException
-        try:
-            poll = self.pipe.wait(os.WNOHANG)
-        except:
-            # totally may happen
-            self.__recv_stop__()
-        else:
-            if poll is not None:
-                self.__recv_stop__()
-
-    def __recv_stop__(self):
+    def __exit_callback__(self, exitcode):
         self.read_cb.stop()
         self.check_cb.stop()
 
-        self.ioloop.add_callback(self.__stopped__)
+        self.ioloop.add_callback(self.__stopped__, exitcode=exitcode)
 
     @coroutine
-    def crashed(self, reason):
+    def crashed(self, reason, exitcode=999):
         self.__notify__(reason)
-        yield self.__stopped__(GameServer.STATUS_ERROR)
+        yield self.__stopped__(GameServer.STATUS_ERROR, exitcode=exitcode)
 
     @coroutine
-    def __stopped__(self, reason=STATUS_STOPPED):
+    def __stopped__(self, reason=STATUS_STOPPED, exitcode=0):
         if self.status == reason:
             return
 

@@ -126,9 +126,10 @@ class GameServersModel(Model):
         def remove_server():
             s = self.servers.pop(instance.name, None)
             if s:
+                s.reset()
                 self.servers_rooms.pop(s.room.id())
 
-        tornado.ioloop.IOLoop.current().add_timeout(datetime.timedelta(minutes=10), remove_server)
+        tornado.ioloop.IOLoop.current().add_timeout(datetime.timedelta(minutes=2), remove_server)
 
     @coroutine
     def terminate_all(self, kill=False):

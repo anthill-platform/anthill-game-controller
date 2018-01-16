@@ -58,6 +58,10 @@ class BufferedLog(object):
             self.callback(data)
             self.buffer = []
 
+    def reset(self):
+        self.log = []
+        self.buffer = []
+
 
 class SpawnError(Exception):
     def __init__(self, message):
@@ -409,6 +413,14 @@ class GameServer(object):
                 self.gs.pool.put(port)
 
         self.ports = []
+
+    def reset(self):
+        self.log.reset()
+        del self.log
+        del self.check_cb
+        del self.read_cb
+
+        logging.info(u"[{0}] Server has been released".format(self.name))
 
     def __flush_log__(self, data):
         self.pub.notify("log", name=self.name, data=data)

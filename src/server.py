@@ -26,6 +26,7 @@ class GameControllerServer(common.server.Server):
             self,
             sock_path=options.sock_path,
             binaries_path=options.binaries_path,
+            logs_path=options.logs_path,
             ports_pool_from=options.ports_pool_from,
             ports_pool_to=options.ports_pool_to)
 

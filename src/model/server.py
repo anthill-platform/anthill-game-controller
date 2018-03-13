@@ -1,66 +1,24 @@
 # coding=utf-8
 
-from tornado.gen import coroutine, Return, sleep, with_timeout, Task, TimeoutError
-from tornado.ioloop import PeriodicCallback
-from tornado.concurrent import run_on_executor
-from concurrent.futures import ThreadPoolExecutor
-from tornado.process import Subprocess
+import datetime
+import logging
+import mmap
+import os
+import signal
+import ujson
 
 import tornado.ioloop
+from concurrent.futures import ThreadPoolExecutor
+from tornado.concurrent import run_on_executor
+from tornado.gen import coroutine, Return, with_timeout, Task, TimeoutError, sleep
+from tornado.ioloop import PeriodicCallback
+from tornado.process import Subprocess
 
-import os
-import logging
-import signal
-import msg
-import datetime
-
+import common.discover
 import common.events
 import common.jsonrpc
-import common.discover
-
-from common.discover import DiscoveryError
-from common.internal import Internal, InternalError
-from common import retry, SyncTimeout
+import msg
 from room import NotifyError
-
-import ujson
-import psutil
-
-
-class BufferedLog(object):
-    COLLECT_TIME = 2
-    MAX_LOG_LINES = 512
-
-    def __init__(self, callback):
-        self.buffer = []
-        self.callback = callback
-        self.log = []
-
-    def add(self, data):
-        if not self.buffer:
-            tornado.ioloop.IOLoop.current().add_timeout(
-                datetime.timedelta(seconds=BufferedLog.COLLECT_TIME), self.flush)
-        self.buffer.append(unicode(data))
-
-    def get_log(self):
-        return u"".join(self.log)
-
-    def flush(self):
-        if self.buffer:
-            data = u"\n".join(self.buffer) + u"\n"
-            self.log.append(data)
-
-            log_length = len(self.log)
-            if log_length > BufferedLog.MAX_LOG_LINES + 16:
-                to_delete = log_length - BufferedLog.MAX_LOG_LINES
-                del self.log[:to_delete]
-
-            self.callback(data)
-            self.buffer = []
-
-    def reset(self):
-        self.log = []
-        self.buffer = []
 
 
 class SpawnError(Exception):
@@ -79,11 +37,10 @@ class GameServer(object):
     SPAWN_TIMEOUT = 30
     TERMINATE_TIMEOUT = 5
     CHECK_PERIOD = 60
-    READ_PERIOD_MS = 200
 
     executor = ThreadPoolExecutor(max_workers=4)
 
-    def __init__(self, gs, game_name, game_version, game_server_name, deployment, name, room):
+    def __init__(self, gs, game_name, game_version, game_server_name, deployment, name, room, logs_path):
         self.gs = gs
 
         self.game_name = game_name
@@ -115,10 +72,10 @@ class GameServer(object):
 
         check_period = game_settings.get("check_period", GameServer.CHECK_PERIOD) * 1000
 
-        self.read_cb = PeriodicCallback(self.__recv__, GameServer.READ_PERIOD_MS)
         self.check_cb = PeriodicCallback(self.__check__, check_period)
 
-        self.log = BufferedLog(self.__flush_log__)
+        self.log = open(logs_path, "w")
+        self.log_path = logs_path
 
     def is_running(self):
         return self.status == GameServer.STATUS_RUNNING
@@ -128,7 +85,10 @@ class GameServer(object):
 
     def set_status(self, status):
         self.status = status
-        self.log.flush()
+
+        if self.log is not None:
+            self.log.flush()
+
         self.__notify_updated__()
 
     def __check__(self):
@@ -246,7 +206,7 @@ class GameServer(object):
 
         try:
             self.pipe = Subprocess(cmd, shell=True, cwd=path, preexec_fn=os.setsid, env=env,
-                                   stdin=Subprocess.STREAM, stdout=Subprocess.STREAM, stderr=Subprocess.STREAM)
+                                   stdin=Subprocess.STREAM, stdout=self.log, stderr=self.log)
         except OSError as e:
             reason = u"Failed to spawn a server: " + e.args[1]
             self.__notify__(reason)
@@ -256,7 +216,6 @@ class GameServer(object):
         else:
             self.pipe.set_exit_callback(self.__exit_callback__)
             self.set_status(GameServer.STATUS_LOADING)
-            self.read_cb.start()
 
         self.__notify__(u"Server '{0}' spawned, waiting for init command.".format(self.name))
 
@@ -346,28 +305,46 @@ class GameServer(object):
             else:
                 self.__notify__(u"Terminated successfully.")
 
-        self.log.flush()
+        if self.log is not None:
+            self.log.flush()
 
-    def get_log(self):
-        return self.log.get_log()
+    @coroutine
+    def stream_log(self, process_line):
+        """
+        This coroutine streams associated log file by calling process_line(server_name, line) each
+        time a new line appears (essentially acts like "tail -f").
 
-    def has_log(self, text):
-        return text in self.log.get_log()
+        If the process_line call returns False, the streaming stops.
 
-    def __recv__(self):
-        if self.status == GameServer.STATUS_STOPPED:
+        One the file is closed, stops the iteration
+        """
+
+        try:
+            f = open(self.log_path)
+        except OSError:
             return
 
-        err_data = self.pipe.stderr.read_from_fd()
-        if err_data:
-            self.__notify__(err_data)
+        while not f.closed:
+            try:
+                line = f.readline()
+            except OSError:
+                return
+            if not line:
+                yield sleep(0.5)
+                continue
+            if not process_line(self.name, line):
+                return
 
-        str_data = self.pipe.stdout.read_from_fd()
-        if str_data:
-            self.__notify__(str_data)
+    # noinspection PyBroadException
+    def log_contains_text(self, text):
+        try:
+            with open(self.log_path) as f, \
+                    mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as s:
+                return s.find(text) != -1
+        except Exception:
+            return False
 
     def __exit_callback__(self, exitcode):
-        self.read_cb.stop()
         self.check_cb.stop()
 
         self.ioloop.add_callback(self.__stopped__, exitcode=exitcode)
@@ -384,10 +361,12 @@ class GameServer(object):
 
         self.set_status(reason)
 
-        yield self.release()
-
         self.__notify__(u"Stopped.")
-        self.log.flush()
+
+        if self.log is not None:
+            self.log.flush()
+
+        yield self.release()
 
         # notify the master server that this server is died
         try:
@@ -397,10 +376,18 @@ class GameServer(object):
 
         yield self.gs.server_stopped(self)
 
-        self.log.flush()
 
     @coroutine
     def release(self):
+        if self.log is None:
+            return
+
+        self.ports = []
+        self.pub.release()
+
+        self.log.close()
+        self.log = None
+
         if self.msg:
             yield self.msg.release()
 
@@ -412,22 +399,25 @@ class GameServer(object):
             for port in self.ports:
                 self.gs.pool.put(port)
 
-        self.ports = []
-
-    def reset(self):
-        self.log.reset()
-        del self.log
-        del self.check_cb
-        del self.read_cb
-
         logging.info(u"[{0}] Server has been released".format(self.name))
+
+    def dispose(self):
+
+        del self.check_cb
+        del self.pub
+
+        logging.info(u"[{0}] Server has been disposed".format(self.name))
 
     def __flush_log__(self, data):
         self.pub.notify("log", name=self.name, data=data)
         logging.info(u"[{0}] {1}".format(self.name, data))
 
     def __notify__(self, data):
-        self.log.add(data)
+        if self.log is None:
+            return
+
+        self.log.write(data)
+        self.log.write("\n")
 
     def __handle__(self, action, handlers):
         self.handlers[action] = handlers

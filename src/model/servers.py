@@ -1,5 +1,7 @@
 
 from tornado.gen import coroutine, Return
+from tornado.ioloop import PeriodicCallback
+
 import tornado.ioloop
 from common.model import Model
 
@@ -9,6 +11,7 @@ import server
 import common.events
 import random
 import datetime
+import time
 
 
 class GameServersModel(Model):
@@ -16,24 +19,46 @@ class GameServersModel(Model):
     DEPLOYMENTS = "deployments"
     RUNTIME = "runtime"
 
-    def __init__(self, app,
-                 sock_path="/tmp",
-                 binaries_path="/opt/gs",
-                 ports_pool_from=2000,
-                 ports_pool_to=3000):
+    def __init__(self, app, sock_path, binaries_path,
+                 logs_path, ports_pool_from, ports_pool_to):
 
         self.app = app
         self.sock_path = sock_path
         self.binaries_path = binaries_path
+        self.logs_path = logs_path
 
         if not os.path.isdir(self.binaries_path):
             os.mkdir(self.binaries_path)
+
+        if not os.path.isdir(self.logs_path):
+            os.mkdir(self.logs_path)
+
+        self.clear_logs_cb = PeriodicCallback(self.__clear_logs__, 300000)
 
         self.pool = PortsPool(ports_pool_from, ports_pool_to)
         self.servers = {}
         self.servers_rooms = {}
         self.sub = common.events.Subscriber(self)
         self.pub = common.events.Publisher()
+
+        self.__clear_logs__()
+
+    def __clear_logs__(self):
+        now = time.time()
+
+        removed_counter = 0
+
+        for f in os.listdir(self.logs_path):
+            full_path = os.path.join(self.logs_path, f)
+            try:
+                if os.stat(full_path).st_mtime < now - 86400:
+                    os.remove(full_path)
+                    removed_counter += 1
+            except OSError:
+                pass
+
+        if removed_counter > 0:
+            logging.info("Removed {0} old logging files".format(removed_counter))
 
     def get_server(self, name):
         return self.servers.get(name, None)
@@ -49,7 +74,7 @@ class GameServersModel(Model):
         result = {}
 
         for server_name, instance in self.get_servers().iteritems():
-            if logs and instance.has_log(logs):
+            if logs and instance.log_contains_text(logs):
                 result[server_name] = instance
                 continue
 
@@ -59,7 +84,14 @@ class GameServersModel(Model):
 
     @coroutine
     def instantiate(self, name, game_id, game_version, game_server_name, deployment, room):
-        gs = server.GameServer(self, game_id, game_version, game_server_name, deployment, name, room)
+
+        room_id = room.id()
+        log_file_path = os.path.join(self.logs_path, room_id + ".log")
+
+        gs = server.GameServer(
+            self, game_id, game_version, game_server_name,
+            deployment, name, room, log_file_path)
+
         self.servers[name] = gs
         self.servers_rooms[room.id()] = gs
 
@@ -125,9 +157,9 @@ class GameServersModel(Model):
 
         def remove_server():
             s = self.servers.pop(instance.name, None)
+            self.servers_rooms.pop(instance.room.id(), None)
             if s:
-                s.reset()
-                self.servers_rooms.pop(s.room.id())
+                s.dispose()
 
         tornado.ioloop.IOLoop.current().add_timeout(datetime.timedelta(minutes=2), remove_server)
 
@@ -136,7 +168,12 @@ class GameServersModel(Model):
         yield [s.terminate(kill=kill) for name, s in self.servers.iteritems()]
 
     @coroutine
+    def started(self):
+        self.clear_logs_cb.start()
+
+    @coroutine
     def stopped(self):
+        self.clear_logs_cb.stop()
         yield self.terminate_all(kill=True)
 
 

@@ -35,6 +35,11 @@ define("binaries_path",
        help="Location of game server binaries.",
        type=str)
 
+define("logs_path",
+       default="/usr/local/var/log/gameservers",
+       help="Location for game server output logs.",
+       type=str)
+
 define("ports_pool_from",
        default=38000,
        help="Port range start (for game servers)",

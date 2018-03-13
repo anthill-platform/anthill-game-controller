@@ -1,9 +1,11 @@
 
 from tornado.gen import coroutine, Return
+from tornado.ioloop import IOLoop
 
 import common.admin as a
 import common.events
 import common.jsonrpc
+import datetime
 
 
 class DebugController(a.StreamAdminController):
@@ -12,6 +14,8 @@ class DebugController(a.StreamAdminController):
         super(DebugController, self).__init__(app, token, handler)
         self.gs = self.application.gs
         self.sub = common.events.Subscriber(self)
+        self._subscribed_to = set()
+        self._logs_buffers = {}
 
     @coroutine
     def kill(self, server, hard):
@@ -43,7 +47,8 @@ class DebugController(a.StreamAdminController):
 
     @coroutine
     def on_closed(self):
-        self.sub.unsubscribe_all()
+        self.sub.release()
+        del self.sub
 
     @coroutine
     def on_opened(self, *args, **kwargs):
@@ -90,29 +95,53 @@ class DebugController(a.StreamAdminController):
 
     @coroutine
     def subscribe_logs(self, server):
-        server = self.gs.get_server(server)
+        server_instance = self.gs.get_server(server)
 
-        if not server:
+        if not server_instance:
             raise common.jsonrpc.JsonRPCError(404, "No logs could be seen")
 
-        # get the logs already available
-        logs = server.get_log()
+        if server in self._subscribed_to:
+            raise common.jsonrpc.JsonRPCError(409, "Already subscribed")
 
-        # subscribe for the additional logs
-        self.sub.subscribe(server.pub, ["log"])
+        self._subscribed_to.add(server)
+        IOLoop.current().add_callback(server_instance.stream_log, self.__read_log_stream__)
+        raise Return({})
 
-        raise Return({
-            "stream": logs
-        })
+    def __read_log_stream__(self, server_name, line):
+
+        subscribed = server_name in self._subscribed_to
+
+        if not subscribed:
+            # once 'usubscribe_logs' is called, this one will return False, thus stopping the 'stream_log'
+            return False
+
+        log_buffer = self._logs_buffers.get(server_name, None)
+
+        if log_buffer is None:
+            log_buffer = []
+            self._logs_buffers[server_name] = log_buffer
+            IOLoop.current().add_timeout(datetime.timedelta(seconds=2), self.__flush_log_stream__, server_name)
+
+        log_buffer.append(unicode(line))
+        return True
+
+    def __flush_log_stream__(self, server_name):
+        log_buffer = self._logs_buffers.get(server_name, None)
+
+        if not log_buffer:
+            return
+
+        data = u"".join(log_buffer)
+
+        IOLoop.current().add_callback(self.send_rpc, self, "log", name=server_name, data=data)
+
+        self._logs_buffers.pop(server_name, None)
 
     @coroutine
     def usubscribe_logs(self, server):
+        try:
+            self._subscribed_to.remove(server)
+        except KeyError:
+            pass
 
-        server = self.gs.get_server(server)
-
-        if not server:
-            raise common.jsonrpc.JsonRPCError(404, "No such server")
-
-        # unsubscribe from the logs (if we are)
-        self.sub.unsubscribe(server.pub, ["log"])
-
+        self._logs_buffers.pop(server, None)

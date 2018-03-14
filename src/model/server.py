@@ -382,6 +382,11 @@ class GameServer(object):
         if self.log is None:
             return
 
+        # put back the ports acquired at spawn
+        if self.ports:
+            for port in self.ports:
+                self.gs.pool.put(port)
+
         self.ports = []
         self.pub.release()
 
@@ -393,11 +398,6 @@ class GameServer(object):
 
         if self.room:
             yield self.room.release()
-
-        # put back the ports acquired at spawn
-        if self.ports:
-            for port in self.ports:
-                self.gs.pool.put(port)
 
         logging.info(u"[{0}] Server has been released".format(self.name))
 

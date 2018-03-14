@@ -366,7 +366,7 @@ class GameServer(object):
         if self.log is not None:
             self.log.flush()
 
-        yield self.release()
+        yield self.gs.server_stopped(self)
 
         # notify the master server that this server is died
         try:
@@ -374,8 +374,7 @@ class GameServer(object):
         except common.jsonrpc.JsonRPCError:
             logging.exception("Failed to notify the server is stopped!")
 
-        yield self.gs.server_stopped(self)
-
+        yield self.release()
 
     @coroutine
     def release(self):
@@ -403,8 +402,12 @@ class GameServer(object):
 
     def dispose(self):
 
-        del self.check_cb
-        del self.pub
+        self.check_cb = None
+        self.pub = None
+        self.gs = None
+        self.room = None
+        self.handlers = {}
+        self.msg = None
 
         logging.info(u"[{0}] Server has been disposed".format(self.name))
 

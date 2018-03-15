@@ -397,10 +397,10 @@ class GameServer(object):
 
     # noinspection PyBroadException
     def log_contains_text(self, text):
-        for i in xrange(0, self.log_count):
+        for i in xrange(0, self.log_count + 1):
             try:
-                with open(self.log_path) as f, \
-                        mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as s:
+                with open("{0}.{1}".format(self.log_path, i)) as f:
+                    s = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
                     if s.find(text) != -1:
                         return True
             except Exception:

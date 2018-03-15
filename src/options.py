@@ -49,6 +49,13 @@ define("logs_keep_time",
        type=int,
        group="gameservers")
 
+define("logs_max_file_size",
+       default=2000000,
+       help="Max file size of a single log file. Once exceeded, log will be written to a new file, and old one "
+            "will be eventually cleaned up.",
+       type=int,
+       group="gameservers")
+
 define("ports_pool_from",
        default=38000,
        help="Port range start (for game servers)",

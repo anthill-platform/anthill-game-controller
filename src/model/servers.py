@@ -20,7 +20,7 @@ class GameServersModel(Model):
     RUNTIME = "runtime"
 
     def __init__(self, app, sock_path, binaries_path,
-                 logs_path, logs_keep_time,
+                 logs_path, logs_keep_time, logs_max_file_size,
                  ports_pool_from, ports_pool_to):
 
         self.app = app
@@ -28,6 +28,7 @@ class GameServersModel(Model):
         self.binaries_path = binaries_path
         self.logs_path = logs_path
         self.logs_keep_time = logs_keep_time
+        self.logs_max_file_size = logs_max_file_size
 
         if not os.path.isdir(self.binaries_path):
             os.mkdir(self.binaries_path)
@@ -87,12 +88,11 @@ class GameServersModel(Model):
     @coroutine
     def instantiate(self, name, game_id, game_version, game_server_name, deployment, room):
 
-        room_id = room.id()
-        log_file_path = os.path.join(self.logs_path, room_id + ".log")
+        log_file_path = os.path.join(self.logs_path, name + ".log")
 
         gs = server.GameServer(
             self, game_id, game_version, game_server_name,
-            deployment, name, room, log_file_path)
+            deployment, name, room, log_file_path, self.logs_max_file_size)
 
         self.servers[name] = gs
         self.servers_rooms[room.id()] = gs

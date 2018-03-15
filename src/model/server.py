@@ -37,10 +37,12 @@ class GameServer(object):
     SPAWN_TIMEOUT = 30
     TERMINATE_TIMEOUT = 5
     CHECK_PERIOD = 60
+    READ_PERIOD_MS = 200
 
     executor = ThreadPoolExecutor(max_workers=4)
 
-    def __init__(self, gs, game_name, game_version, game_server_name, deployment, name, room, logs_path):
+    def __init__(self, gs, game_name, game_version, game_server_name,
+                 deployment, name, room, logs_path, logs_max_file_size):
         self.gs = gs
 
         self.game_name = game_name
@@ -72,10 +74,14 @@ class GameServer(object):
 
         check_period = game_settings.get("check_period", GameServer.CHECK_PERIOD) * 1000
 
+        self.read_cb = PeriodicCallback(self.__recv__, GameServer.READ_PERIOD_MS)
         self.check_cb = PeriodicCallback(self.__check__, check_period)
 
-        self.log = open(logs_path, "w")
         self.log_path = logs_path
+        self.log_count = 0
+        self.log = open("{0}.{1}".format(self.log_path, self.log_count), "w", 1)
+        self.log_size = 0
+        self.logs_max_file_size = logs_max_file_size
 
     def is_running(self):
         return self.status == GameServer.STATUS_RUNNING
@@ -206,7 +212,7 @@ class GameServer(object):
 
         try:
             self.pipe = Subprocess(cmd, shell=True, cwd=path, preexec_fn=os.setsid, env=env,
-                                   stdin=Subprocess.STREAM, stdout=self.log, stderr=self.log)
+                                   stdin=Subprocess.STREAM, stdout=Subprocess.STREAM, stderr=Subprocess.STREAM)
         except OSError as e:
             reason = u"Failed to spawn a server: " + e.args[1]
             self.__notify__(reason)
@@ -216,10 +222,12 @@ class GameServer(object):
         else:
             self.pipe.set_exit_callback(self.__exit_callback__)
             self.set_status(GameServer.STATUS_LOADING)
+            self.read_cb.start()
 
         self.__notify__(u"Server '{0}' spawned, waiting for init command.".format(self.name))
 
         def wait(callback):
+            # noinspection PyUnusedLocal
             @coroutine
             def stopped(*args, **kwargs):
                 self.__clear_handle__("stopped")
@@ -319,33 +327,88 @@ class GameServer(object):
         One the file is closed, stops the iteration
         """
 
-        try:
-            f = open(self.log_path)
-        except OSError:
-            return
+        file_counter = -1
+        f = None
 
-        while not f.closed:
+        while True:
+            if f is None or f.closed:
+                file_counter += 1
+
+                try:
+                    f = open("{0}.{1}".format(self.log_path, file_counter))
+                except OSError:
+                    f = None
+                    if file_counter > self.log_count:
+                        # no next file, so ending
+                        return
+                    else:
+                        continue
             try:
                 line = f.readline()
             except OSError:
-                return
+                continue
             if not line:
+                if file_counter == self.log_count:
+                    if self.status == GameServer.STATUS_STOPPED:
+                        # that's last one and the server is stopped
+                        f.close()
+                        return
+                else:
+                    # that's not the last file in the chain, switch to the next one
+                    f.close()
+                    continue
                 yield sleep(0.5)
                 continue
             if not process_line(self.name, line):
                 return
 
+    def __write_log__(self, data):
+        self.log.write(data)
+        self.log_size += len(data)
+
+        if self.log_size > self.logs_max_file_size:
+            self.log_count += 1
+            self.log_size = 0
+
+            new_log_file = "{0}.{1}".format(self.log_path, self.log_count)
+
+            # open log as a new file, once the limit exceeded
+            # eventually the old one will be cleaned up
+            self.log.close()
+            self.log = open(new_log_file, "w", 1)
+
+            self.__notify__("Swapping log file: {0}".format(new_log_file))
+
+    def __recv__(self):
+        if self.status == GameServer.STATUS_STOPPED:
+            return
+
+        while True:
+            err_data = self.pipe.stderr.read_from_fd()
+            if not err_data:
+                break
+            self.__write_log__(err_data)
+
+        while True:
+            str_data = self.pipe.stdout.read_from_fd()
+            if not str_data:
+                break
+            self.__write_log__(str_data)
+
     # noinspection PyBroadException
     def log_contains_text(self, text):
-        try:
-            with open(self.log_path) as f, \
-                    mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as s:
-                return s.find(text) != -1
-        except Exception:
-            return False
+        for i in xrange(0, self.log_count):
+            try:
+                with open(self.log_path) as f, \
+                        mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as s:
+                    if s.find(text) != -1:
+                        return True
+            except Exception:
+                continue
 
     def __exit_callback__(self, exitcode):
         self.check_cb.stop()
+        self.read_cb.stop()
 
         self.ioloop.add_callback(self.__stopped__, exitcode=exitcode)
 
@@ -386,6 +449,24 @@ class GameServer(object):
             for port in self.ports:
                 self.gs.pool.put(port)
 
+        # noinspection PyBroadException
+        try:
+            self.pipe.stdout.close_fd()
+        except Exception:
+            pass
+
+        # noinspection PyBroadException
+        try:
+            self.pipe.stderr.close_fd()
+        except Exception:
+            pass
+
+        # noinspection PyBroadException
+        try:
+            self.pipe.stdin.close_fd()
+        except Exception:
+            pass
+
         self.ports = []
         self.pub.release()
 
@@ -403,6 +484,7 @@ class GameServer(object):
     def dispose(self):
 
         self.check_cb = None
+        self.read_cb = None
         self.pub = None
         self.gs = None
         self.room = None

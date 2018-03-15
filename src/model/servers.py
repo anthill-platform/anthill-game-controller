@@ -20,12 +20,14 @@ class GameServersModel(Model):
     RUNTIME = "runtime"
 
     def __init__(self, app, sock_path, binaries_path,
-                 logs_path, ports_pool_from, ports_pool_to):
+                 logs_path, logs_keep_time,
+                 ports_pool_from, ports_pool_to):
 
         self.app = app
         self.sock_path = sock_path
         self.binaries_path = binaries_path
         self.logs_path = logs_path
+        self.logs_keep_time = logs_keep_time
 
         if not os.path.isdir(self.binaries_path):
             os.mkdir(self.binaries_path)
@@ -51,7 +53,7 @@ class GameServersModel(Model):
         for f in os.listdir(self.logs_path):
             full_path = os.path.join(self.logs_path, f)
             try:
-                if os.stat(full_path).st_mtime < now - 86400:
+                if os.stat(full_path).st_mtime < now - self.logs_keep_time:
                     os.remove(full_path)
                     removed_counter += 1
             except OSError:

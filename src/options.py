@@ -28,24 +28,35 @@ define("name",
 define("sock_path",
        default="/tmp",
        help="Location of the unix sockets game servers communicate with.",
-       type=str)
+       type=str,
+       group="gameservers")
 
 define("binaries_path",
        default="/usr/local/anthill/game-controller-binaries",
        help="Location of game server binaries.",
-       type=str)
+       type=str,
+       group="gameservers")
 
 define("logs_path",
        default="/usr/local/var/log/gameservers",
        help="Location for game server output logs.",
-       type=str)
+       type=str,
+       group="gameservers")
+
+define("logs_keep_time",
+       default=86400,
+       help="Time to keep the logs for each game server.",
+       type=int,
+       group="gameservers")
 
 define("ports_pool_from",
        default=38000,
        help="Port range start (for game servers)",
-       type=int)
+       type=int,
+       group="gameservers")
 
 define("ports_pool_to",
        default=40000,
        help="Port range end (for game servers)",
-       type=int)
+       type=int,
+       group="gameservers")

@@ -4,7 +4,7 @@ from tornado.concurrent import run_on_executor
 from concurrent.futures import ThreadPoolExecutor
 
 from common.model import Model
-from servers import GameServersModel
+from controller import GameServersControllerModel
 
 import os
 import hashlib
@@ -59,7 +59,7 @@ class Delivery(object):
             ))
 
         runtime_path = os.path.join(
-            self.binaries_path, GameServersModel.RUNTIME)
+            self.binaries_path, GameServersControllerModel.RUNTIME)
 
         if not os.path.isdir(runtime_path):
             try:
@@ -69,7 +69,7 @@ class Delivery(object):
                     self.game_name, self.game_version, self.deployment_id, str(e)
                 ))
 
-        app_path = os.path.join(self.binaries_path, GameServersModel.RUNTIME, self.game_name)
+        app_path = os.path.join(self.binaries_path, GameServersControllerModel.RUNTIME, self.game_name)
 
         if not os.path.isdir(app_path):
             try:
@@ -79,7 +79,7 @@ class Delivery(object):
                     self.game_name, self.game_version, self.deployment_id, str(e)
                 ))
 
-        version_path = os.path.join(self.binaries_path, GameServersModel.RUNTIME, self.game_name, self.game_version)
+        version_path = os.path.join(self.binaries_path, GameServersControllerModel.RUNTIME, self.game_name, self.game_version)
 
         if not os.path.isdir(version_path):
             try:
@@ -90,7 +90,7 @@ class Delivery(object):
                 ))
 
         app_runtime_path = os.path.join(
-            self.binaries_path, GameServersModel.RUNTIME, self.game_name, self.game_version,
+            self.binaries_path, GameServersControllerModel.RUNTIME, self.game_name, self.game_version,
             str(self.deployment_id))
 
         if not os.path.isdir(app_runtime_path):
@@ -118,7 +118,7 @@ class Delivery(object):
     @run_on_executor
     def delete(self):
         app_runtime_path = os.path.join(
-            self.binaries_path, GameServersModel.RUNTIME,
+            self.binaries_path, GameServersControllerModel.RUNTIME,
             self.game_name, self.game_version, str(self.deployment_id))
 
         try:
@@ -148,7 +148,7 @@ class Delivery(object):
             ))
 
     def __init_paths__(self):
-        deployments_path = os.path.join(self.binaries_path, GameServersModel.DEPLOYMENTS)
+        deployments_path = os.path.join(self.binaries_path, GameServersControllerModel.DEPLOYMENTS)
 
         if not os.path.isdir(deployments_path):
             try:
@@ -158,7 +158,7 @@ class Delivery(object):
                     self.game_name, self.game_version, self.deployment_id, str(e)
                 ))
 
-        app_path = os.path.join(self.binaries_path, GameServersModel.DEPLOYMENTS, self.game_name)
+        app_path = os.path.join(self.binaries_path, GameServersControllerModel.DEPLOYMENTS, self.game_name)
 
         if not os.path.isdir(app_path):
             try:
@@ -168,7 +168,8 @@ class Delivery(object):
                     self.game_name, self.game_version, self.deployment_id, str(e)
                 ))
 
-        version_path = os.path.join(self.binaries_path, GameServersModel.DEPLOYMENTS, self.game_name, self.game_version)
+        version_path = os.path.join(
+            self.binaries_path, GameServersControllerModel.DEPLOYMENTS, self.game_name, self.game_version)
 
         if not os.path.isdir(version_path):
             try:
@@ -179,7 +180,7 @@ class Delivery(object):
                 ))
 
         self.deployment_path = os.path.join(
-            self.binaries_path, GameServersModel.DEPLOYMENTS, self.game_name, self.game_version,
+            self.binaries_path, GameServersControllerModel.DEPLOYMENTS, self.game_name, self.game_version,
             str(self.deployment_id) + ".zip")
 
     @coroutine
@@ -193,9 +194,9 @@ class Delivery(object):
 
 
 class DeliveryModel(Model):
-    def __init__(self, gs):
+    def __init__(self, gs_controller):
         super(DeliveryModel, self).__init__()
-        self.binaries_path = gs.binaries_path
+        self.binaries_path = gs_controller.binaries_path
 
     @coroutine
     def deliver(self, game_name, game_version, deployment_id, deployment_hash):

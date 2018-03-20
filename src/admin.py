@@ -12,14 +12,14 @@ class DebugController(a.StreamAdminController):
 
     def __init__(self, app, token, handler):
         super(DebugController, self).__init__(app, token, handler)
-        self.gs = self.application.gs
+        self.gs_controller = self.application.gs_controller
         self.sub = common.events.Subscriber(self)
         self._subscribed_to = set()
         self._logs_buffers = {}
 
     @coroutine
     def kill(self, server, hard):
-        server = self.gs.get_server(server)
+        server = self.gs_controller.get_server_by_name(server)
 
         if not server:
             return
@@ -32,7 +32,7 @@ class DebugController(a.StreamAdminController):
 
     @coroutine
     def send_stdin(self, server, data):
-        server = self.gs.get_server(server)
+        server = self.gs.get_server_by_name(server)
 
         if not server:
             return
@@ -53,12 +53,12 @@ class DebugController(a.StreamAdminController):
     @coroutine
     def on_opened(self, *args, **kwargs):
 
-        servers = self.gs.get_servers()
+        servers = self.gs_controller.list_servers_by_name()
 
         result = [DebugController.serialize_server(server) for server_name, server in servers.iteritems()]
         yield self.send_rpc(self, "servers", result)
 
-        self.sub.subscribe(self.gs.pub, ["new_server", "server_removed", "server_updated"])
+        self.sub.subscribe(self.gs_controller.pub, ["new_server", "server_removed", "server_updated"])
 
     def scopes_stream(self):
         return ["game_admin"]
@@ -66,7 +66,7 @@ class DebugController(a.StreamAdminController):
     @coroutine
     def search_logs(self, data):
 
-        servers = self.gs.search(logs=data)
+        servers = self.gs_controller.search(logs=data)
 
         raise Return({
             "servers": [server_name for server_name, instance in servers.iteritems()]
@@ -95,7 +95,7 @@ class DebugController(a.StreamAdminController):
 
     @coroutine
     def subscribe_logs(self, server):
-        server_instance = self.gs.get_server(server)
+        server_instance = self.gs_controller.get_server_by_name(server)
 
         if not server_instance:
             raise common.jsonrpc.JsonRPCError(404, "No logs could be seen")

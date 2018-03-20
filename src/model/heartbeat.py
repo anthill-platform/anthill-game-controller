@@ -8,8 +8,7 @@ class HeartbeatModel(Model):
         self.app = app
 
     def __rooms_report__(self):
-        rooms = self.app.rooms
-        return [room_id for room_id, room in rooms.list()]
+        return [room_id for room_id, room in self.app.gs_controller.list_rooms()]
 
     def report(self):
         memory_load = int(virtual_memory().percent)

@@ -8,9 +8,10 @@ import signal
 import ujson
 
 import tornado.ioloop
+
 from concurrent.futures import ThreadPoolExecutor
 from tornado.concurrent import run_on_executor
-from tornado.gen import coroutine, Return, with_timeout, Task, TimeoutError, sleep
+from tornado.gen import coroutine, Return, with_timeout, TimeoutError, sleep, Future
 from tornado.ioloop import PeriodicCallback
 from tornado.process import Subprocess
 
@@ -18,11 +19,16 @@ import common.discover
 import common.events
 import common.jsonrpc
 import msg
-from room import NotifyError
 
 
 class SpawnError(Exception):
     def __init__(self, message):
+        self.message = message
+
+
+class NotifyError(Exception):
+    def __init__(self, code, message):
+        self.code = code
         self.message = message
 
 
@@ -41,9 +47,9 @@ class GameServer(object):
 
     executor = ThreadPoolExecutor(max_workers=4)
 
-    def __init__(self, gs, game_name, game_version, game_server_name,
+    def __init__(self, gs_controller, game_name, game_version, game_server_name,
                  deployment, name, room, logs_path, logs_max_file_size):
-        self.gs = gs
+        self.gs_controller = gs_controller
 
         self.game_name = game_name
         self.game_version = game_version
@@ -58,6 +64,7 @@ class GameServer(object):
         self.msg = None
         self.on_stopped = None
         self.pub = common.events.Publisher()
+        self.init_future = None
 
         # message handlers
         self.handlers = {}
@@ -70,7 +77,7 @@ class GameServer(object):
 
         # get ports from the pool
         for i in xrange(0, ports_num):
-            self.ports.append(gs.pool.acquire())
+            self.ports.append(gs_controller.pool.acquire())
 
         check_period = game_settings.get("check_period", GameServer.CHECK_PERIOD) * 1000
 
@@ -121,6 +128,7 @@ class GameServer(object):
                 self.__notify__(u"Bad status")
                 yield self.terminate(False)
 
+    # noinspection PyUnusedLocal
     @coroutine
     def update_settings(self, result, settings, *args, **kwargs):
         self.__notify_updated__()
@@ -172,6 +180,52 @@ class GameServer(object):
             env["discovery:services"] = ujson.dumps(discover, escape_forward_slashes=False)
 
         raise Return(env)
+
+    # noinspection PyUnusedLocal
+    @coroutine
+    def __cb_stopped__(self, *args, **kwargs):
+        if self.init_future is None:
+            return
+
+        self.__clear_handle__("stopped")
+
+        self.init_future.set_exception(SpawnError(u"Stopped before 'inited' command received."))
+        self.init_future = None
+
+    @coroutine
+    def __cb_inited__(self, settings=None):
+        if self.init_future is None:
+            return
+
+        self.__clear_handle__("inited")
+        self.__clear_handle__("stopped")
+
+        # call it, the message will be passed
+        self.init_future.set_result(settings or {})
+        self.init_future = None
+
+        # we're done initializing
+        res_ = yield self.inited(settings)
+        raise Return(res_)
+
+    def __wait_for_init_future__(self):
+        """
+        This "method" returns a Future that will be resolved later, either by:
+
+           1) "inited" method being called (see __cb_inited__) by the gameserver
+           2) "stopped" method being called (see __cb_stopped__) either by the crash of the gameserver, or due to
+              external interrupt
+
+        :return: a Future
+        """
+        self.init_future = Future()
+
+        # catch the init message
+        self.__handle__("inited", self.__cb_inited__)
+        # and the stopped (if one)
+        self.__handle__("stopped", self.__cb_stopped__)
+
+        return self.init_future
 
     @coroutine
     def spawn(self, path, binary, sock_path, cmd_arguments, env, room):
@@ -226,36 +280,12 @@ class GameServer(object):
 
         self.__notify__(u"Server '{0}' spawned, waiting for init command.".format(self.name))
 
-        def wait(callback):
-            # noinspection PyUnusedLocal
-            @coroutine
-            def stopped(*args, **kwargs):
-                self.__clear_handle__("stopped")
-                callback(SpawnError(u"Stopped before 'inited' command received."))
-
-            @coroutine
-            def inited(settings=None):
-                self.__clear_handle__("inited")
-                self.__clear_handle__("stopped")
-
-                # call it, the message will be passed
-                callback(settings or {})
-
-                # we're done initializing
-                res_ = yield self.inited(settings)
-                raise Return(res_)
-
-            # catch the init message
-            self.__handle__("inited", inited)
-            # and the stopped (if one)
-            self.__handle__("stopped", stopped)
+        f = self.__wait_for_init_future__()
 
         # wait, until the 'init' command is received
         # or, the server is stopped (that's bad) earlier
         try:
-            settings = yield with_timeout(
-                datetime.timedelta(seconds=GameServer.SPAWN_TIMEOUT),
-                Task(wait))
+            settings = yield with_timeout(datetime.timedelta(seconds=GameServer.SPAWN_TIMEOUT), f)
 
             # if the result is an Exception, that means
             # the 'wait' told us so
@@ -267,6 +297,9 @@ class GameServer(object):
             self.__notify__(u"Timeout to spawn.")
             yield self.terminate(True)
             raise SpawnError(u"Failed to spawn a game server: timeout")
+
+        finally:
+            self.init_future = None
 
     @coroutine
     def send_stdin(self, data):
@@ -380,6 +413,10 @@ class GameServer(object):
             self.__notify__("Swapping log file: {0}".format(new_log_file))
 
     def __recv__(self):
+        """
+        This one if often called to poll the STREAM output of the game server
+        """
+
         if self.status == GameServer.STATUS_STOPPED:
             return
 
@@ -417,6 +454,7 @@ class GameServer(object):
         self.__notify__(reason)
         yield self.__stopped__(GameServer.STATUS_ERROR, exitcode=exitcode)
 
+    # noinspection PyUnusedLocal
     @coroutine
     def __stopped__(self, reason=STATUS_STOPPED, exitcode=0):
         if self.status == reason:
@@ -429,7 +467,7 @@ class GameServer(object):
         if self.log is not None:
             self.log.flush()
 
-        yield self.gs.server_stopped(self)
+        yield self.gs_controller.server_stopped(self)
 
         # notify the master server that this server is died
         try:
@@ -447,7 +485,7 @@ class GameServer(object):
         # put back the ports acquired at spawn
         if self.ports:
             for port in self.ports:
-                self.gs.pool.put(port)
+                self.gs_controller.pool.put(port)
 
         # noinspection PyBroadException
         try:
@@ -476,9 +514,6 @@ class GameServer(object):
         if self.msg:
             yield self.msg.release()
 
-        if self.room:
-            yield self.room.release()
-
         logging.info(u"[{0}] Server has been released".format(self.name))
 
     def dispose(self):
@@ -486,10 +521,12 @@ class GameServer(object):
         self.check_cb = None
         self.read_cb = None
         self.pub = None
-        self.gs = None
+        self.gs_controller = None
         self.room = None
-        self.handlers = {}
+        self.handlers = None
         self.msg = None
+        self.pipe = None
+        self.init_future = None
 
         logging.info(u"[{0}] Server has been disposed".format(self.name))
 
@@ -505,10 +542,12 @@ class GameServer(object):
         self.log.write("\n")
 
     def __handle__(self, action, handlers):
-        self.handlers[action] = handlers
+        if self.handlers is not None:
+            self.handlers[action] = handlers
 
     def __clear_handle__(self, action):
-        self.handlers.pop(action)
+        if self.handlers is not None:
+            self.handlers.pop(action)
 
     @coroutine
     def __check_deployment__(self):
@@ -530,9 +569,10 @@ class GameServer(object):
 
         raise Return(response)
 
+    # noinspection PyUnusedLocal
     @coroutine
     def command(self, context, method, *args, **kwargs):
-        if method in self.handlers:
+        if (self.handlers is not None) and (method in self.handlers):
             # if this action is registered
             # inside of the internal handlers
             # then catch it

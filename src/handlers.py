@@ -6,7 +6,7 @@ from common.internal import InternalError
 from common.access import internal
 from common.handler import AuthenticatedHandler
 
-from model.server import SpawnError
+from model.gameserver import SpawnError
 from model.delivery import DeliveryError
 
 import ujson
@@ -71,7 +71,7 @@ class SpawnHandler(AuthenticatedHandler):
     @internal
     def post(self):
 
-        game_id = self.get_argument("game_id")
+        game_name = self.get_argument("game_id")
         game_version = self.get_argument("game_version")
         game_server_name = self.get_argument("game_server_name")
         gamespace = self.get_argument("gamespace")
@@ -83,13 +83,12 @@ class SpawnHandler(AuthenticatedHandler):
         except (KeyError, ValueError):
             raise HTTPError(400, "Corrupted settings")
 
-        gs = self.application.gs
-        rooms = self.application.rooms
-
-        room = rooms.new(gamespace, room_id, settings)
+        gs_controller = self.application.gs_controller
 
         try:
-            result = yield gs.spawn(game_id, game_version, game_server_name, deployment, room)
+            result = yield gs_controller.spawn(
+                gamespace, room_id, settings, game_name,
+                game_version, game_server_name, deployment)
         except SpawnError as e:
             raise HTTPError(500, "Failed to spawn: " + e.message)
 
@@ -102,8 +101,8 @@ class TerminateHandler(AuthenticatedHandler):
     def post(self):
         room_id = self.get_argument("room_id")
 
-        gs = self.application.gs
-        s = gs.get_server_by_room(room_id)
+        gs_controller = self.application.gs_controller
+        s = gs_controller.get_server_by_room(room_id)
 
         if not s:
             raise HTTPError(404, "No such server")
@@ -118,8 +117,8 @@ class ExecuteStdInHandler(AuthenticatedHandler):
         room_id = self.get_argument("room_id")
         command = self.get_argument("command")
 
-        gs = self.application.gs
-        s = gs.get_server_by_room(room_id)
+        gs_controller = self.application.gs_controller
+        s = gs_controller.get_server_by_room(room_id)
 
         if not s:
             raise HTTPError(404, "No such server")

@@ -6,8 +6,7 @@ import common.access
 import common.sign
 import handlers as h
 
-from model.servers import GameServersModel
-from model.room import RoomsData
+from model.controller import GameServersControllerModel
 from model.delivery import DeliveryModel
 from model.heartbeat import HeartbeatModel
 
@@ -22,7 +21,7 @@ class GameControllerServer(common.server.Server):
 
         self.gs_host = options.gs_host
 
-        self.gs = GameServersModel(
+        self.gs_controller = GameServersControllerModel(
             self,
             sock_path=options.sock_path,
             binaries_path=options.binaries_path,
@@ -32,15 +31,14 @@ class GameControllerServer(common.server.Server):
             ports_pool_from=options.ports_pool_from,
             ports_pool_to=options.ports_pool_to)
 
-        self.rooms = RoomsData(self)
-        self.delivery = DeliveryModel(self.gs)
+        self.delivery = DeliveryModel(self.gs_controller)
         self.heartbeat = HeartbeatModel(self)
 
     def get_internal_handler(self):
         return h.InternalHandler(self)
 
     def get_models(self):
-        return [self.gs, self.rooms, self.delivery, self.heartbeat]
+        return [self.gs_controller, self.delivery, self.heartbeat]
 
     def get_handlers(self):
         return [

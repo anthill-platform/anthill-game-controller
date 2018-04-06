@@ -161,10 +161,10 @@ class GameServer(object):
         max_players = game_settings.get("max_players", 8)
 
         env = {
-            "server:settings": ujson.dumps(server_settings, escape_forward_slashes=False),
-            "room:settings": ujson.dumps(room_settings),
-            "room:id": str(room.id()),
-            "game:max_players": str(max_players)
+            "server_settings": ujson.dumps(server_settings, escape_forward_slashes=False),
+            "room_settings": ujson.dumps(room_settings),
+            "room_id": str(room.id()),
+            "game_max_players": str(max_players)
         }
 
         if other_settings:
@@ -176,11 +176,11 @@ class GameServer(object):
 
         token = game_settings.get("token", None)
         if token:
-            env["login:access_token"] = token
+            env["login_access_token"] = token
 
         discover = game_settings.get("discover", None)
         if discover:
-            env["discovery:services"] = ujson.dumps(discover, escape_forward_slashes=False)
+            env["discovery_services"] = ujson.dumps(discover, escape_forward_slashes=False)
 
         raise Return(env)
 

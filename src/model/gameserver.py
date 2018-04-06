@@ -44,6 +44,7 @@ class GameServer(object):
     TERMINATE_TIMEOUT = 5
     CHECK_PERIOD = 60
     READ_PERIOD_MS = 200
+    READ_BUFFER_SIZE = 2048
 
     executor = ThreadPoolExecutor(max_workers=4)
 
@@ -65,6 +66,8 @@ class GameServer(object):
         self.on_stopped = None
         self.pub = common.events.Publisher()
         self.init_future = None
+        self.read_buffer = bytearray(GameServer.READ_BUFFER_SIZE)
+        self.read_mem = memoryview(self.read_buffer)
 
         # message handlers
         self.handlers = {}
@@ -86,7 +89,7 @@ class GameServer(object):
 
         self.log_path = logs_path
         self.log_count = 0
-        self.log = open("{0}.{1}".format(self.log_path, self.log_count), "w", 1)
+        self.log = open("{0}.{1}".format(self.log_path, self.log_count), "wb", 1)
         self.log_size = 0
         self.logs_max_file_size = logs_max_file_size
 
@@ -408,7 +411,7 @@ class GameServer(object):
             # open log as a new file, once the limit exceeded
             # eventually the old one will be cleaned up
             self.log.close()
-            self.log = open(new_log_file, "w", 1)
+            self.log = open(new_log_file, "wb", 1)
 
             self.__notify__("Swapping log file: {0}".format(new_log_file))
 
@@ -421,16 +424,16 @@ class GameServer(object):
             return
 
         while True:
-            err_data = self.pipe.stderr.read_from_fd()
-            if not err_data:
+            err_read_num = self.pipe.stderr.read_from_fd(self.read_buffer)
+            if err_read_num is None:
                 break
-            self.__write_log__(err_data)
+            self.__write_log__(self.read_mem[0:err_read_num])
 
         while True:
-            str_data = self.pipe.stdout.read_from_fd()
-            if not str_data:
+            str_read_num = self.pipe.stdout.read_from_fd(self.read_buffer)
+            if str_read_num is None:
                 break
-            self.__write_log__(str_data)
+            self.__write_log__(self.read_mem[0:str_read_num])
 
     # noinspection PyBroadException
     def log_contains_text(self, text):

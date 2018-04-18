@@ -509,7 +509,6 @@ class GameServer(object):
             pass
 
         self.ports = []
-        self.pub.release()
 
         self.log.close()
         self.log = None

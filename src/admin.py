@@ -32,7 +32,7 @@ class DebugController(a.StreamAdminController):
 
     @coroutine
     def send_stdin(self, server, data):
-        server = self.gs.get_server_by_name(server)
+        server = self.gs_controller.get_server_by_name(server)
 
         if not server:
             return
@@ -47,7 +47,6 @@ class DebugController(a.StreamAdminController):
 
     @coroutine
     def on_closed(self):
-        self.sub.release()
         del self.sub
 
     @coroutine

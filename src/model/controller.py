@@ -115,6 +115,9 @@ class Room(object):
     def dispose(self):
         self.notify_handlers = None
 
+    def __del__(self):
+        logging.info("Room instance has been deleted: " + self.room_id)
+
 
 class GameServersControllerModel(Model):
 

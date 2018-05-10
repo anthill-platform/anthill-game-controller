@@ -89,6 +89,7 @@ class GameServer(object):
 
         self.log_path = logs_path
         self.log_count = 0
+        self.log_dirty = False
         self.log = open("{0}.{1}".format(self.log_path, self.log_count), "wb", 1)
         self.log_size = 0
         self.logs_max_file_size = logs_max_file_size
@@ -150,6 +151,9 @@ class GameServer(object):
         raise Return({
             "status": "OK"
         })
+
+    def __del__(self):
+        logging.info(u"[{0}] Server instance has been deleted".format(self.name))
 
     @coroutine
     def __prepare__(self, room):
@@ -401,6 +405,7 @@ class GameServer(object):
     def __write_log__(self, data):
         self.log.write(data)
         self.log_size += len(data)
+        self.log_dirty = True
 
         if self.log_size > self.logs_max_file_size:
             self.log_count += 1
@@ -412,6 +417,7 @@ class GameServer(object):
             # eventually the old one will be cleaned up
             self.log.close()
             self.log = open(new_log_file, "wb", 1)
+            self.log_dirty = False
 
             self.__notify__("Swapping log file: {0}".format(new_log_file))
 
@@ -434,6 +440,14 @@ class GameServer(object):
             if str_read_num is None:
                 break
             self.__write_log__(self.read_mem[0:str_read_num])
+
+        if self.log_dirty:
+            self.log_dirty = False
+
+            try:
+                self.log.flush()
+            except OSError:
+                pass
 
     # noinspection PyBroadException
     def log_contains_text(self, text):
@@ -528,13 +542,10 @@ class GameServer(object):
         self.handlers = None
         self.msg = None
         self.pipe = None
+        self.ports = None
         self.init_future = None
 
         logging.info(u"[{0}] Server has been disposed".format(self.name))
-
-    def __flush_log__(self, data):
-        self.pub.notify("log", name=self.name, data=data)
-        logging.info(u"[{0}] {1}".format(self.name, data))
 
     def __notify__(self, data):
         if self.log is None:

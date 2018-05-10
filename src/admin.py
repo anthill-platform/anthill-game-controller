@@ -27,10 +27,6 @@ class DebugController(a.StreamAdminController):
         yield server.terminate(kill=hard)
 
     @coroutine
-    def log(self, name, data):
-        yield self.send_rpc(self, "log", name=name, data=data)
-
-    @coroutine
     def send_stdin(self, server, data):
         server = self.gs_controller.get_server_by_name(server)
 
@@ -47,6 +43,8 @@ class DebugController(a.StreamAdminController):
 
     @coroutine
     def on_closed(self):
+        self._subscribed_to = set()
+        self.sub.unsubscribe_all()
         del self.sub
 
     @coroutine
@@ -85,7 +83,6 @@ class DebugController(a.StreamAdminController):
 
     @coroutine
     def server_removed(self, server):
-        server.pub.unsubscribe(["log"], self)
         yield self.send_rpc(self, "server_removed", **DebugController.serialize_server(server))
 
     @coroutine

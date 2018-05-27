@@ -90,7 +90,9 @@ class SpawnHandler(AuthenticatedHandler):
                 gamespace, room_id, settings, game_name,
                 game_version, game_server_name, deployment)
         except SpawnError as e:
-            raise HTTPError(500, "Failed to spawn: " + e.message)
+            self.set_status(500, e.message)
+            self.write(e.message)
+            return
 
         self.dumps(result)
 

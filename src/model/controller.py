@@ -317,7 +317,7 @@ class GameServersControllerModel(Model):
         yield [s.terminate(kill=kill) for name, s in self.servers_by_name.iteritems()]
 
     @coroutine
-    def started(self):
+    def started(self, application):
         self.clear_logs_cb.start()
 
     @coroutine

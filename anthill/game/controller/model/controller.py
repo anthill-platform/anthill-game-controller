@@ -1,16 +1,16 @@
 
-from tornado.gen import coroutine, Return
 from tornado.ioloop import PeriodicCallback
+from tornado.gen import multi
+from tornado.ioloop import IOLoop
 
-import tornado.ioloop
-from common.model import Model
-from common.internal import Internal, InternalError
-from common import retry
+from anthill.common.model import Model
+from anthill.common.internal import Internal, InternalError
+from anthill.common import retry, events
+
+from . import gameserver
 
 import logging
 import os
-import gameserver
-import common.events
 import random
 import datetime
 import time
@@ -64,8 +64,7 @@ class Room(object):
     def id(self):
         return self.room_id
 
-    @coroutine
-    def notify(self, method, *args, **kwargs):
+    async def notify(self, method, *args, **kwargs):
         """
         Notify the master server about actions, happened in the room
         """
@@ -74,10 +73,10 @@ class Room(object):
 
         # if there's a handler with such action name, call it first
         if notify_handler:
-            result = yield notify_handler(*args, **kwargs)
+            result = await notify_handler(*args, **kwargs)
             # and if it has some result, return it instead
             if result is not None:
-                raise Return(result)
+                return result
 
         try:
             @retry(operation="notify room {0} action {1}".format(self.id(), method), max=5, delay=10)
@@ -90,14 +89,14 @@ class Room(object):
                     args=args,
                     kwargs=kwargs)
 
-            result = yield do_try(self.id(), self.gamespace)
+            result = await do_try(self.id(), self.gamespace)
 
         except InternalError as e:
             logging.error("Failed to notify an action: " + str(e.code) + ": " + e.body)
 
-            raise gameserver.NotifyError(e.code, e.message)
+            raise gameserver.NotifyError(e.code, str(e))
         else:
-            raise Return(result)
+            return result
 
     def add_handler(self, name, callback):
         self.notify_handlers[name] = callback
@@ -107,8 +106,7 @@ class Room(object):
 
     # special notify handlers
 
-    @coroutine
-    def update_settings(self, settings, *args, **kwargs):
+    async def update_settings(self, settings, *args, **kwargs):
         if settings:
             self.room_settings().update(settings)
 
@@ -144,8 +142,8 @@ class GameServersControllerModel(Model):
         self.clear_logs_cb = PeriodicCallback(self.__clear_logs__, 300000)
 
         self.pool = PortsPool(ports_pool_from, ports_pool_to)
-        self.sub = common.events.Subscriber(self)
-        self.pub = common.events.Publisher()
+        self.sub = events.Subscriber(self)
+        self.pub = events.Publisher()
 
         self.servers_by_name = {}
         self.servers_by_room_id = {}
@@ -183,7 +181,7 @@ class GameServersControllerModel(Model):
 
         result = {}
 
-        for server_name, instance in self.servers_by_name.iteritems():
+        for server_name, instance in self.servers_by_name.items():
             if logs and instance.log_contains_text(logs):
                 result[server_name] = instance
                 continue
@@ -202,7 +200,7 @@ class GameServersControllerModel(Model):
         """
         :returns: An iterable [room_id, room] of currently active rooms
         """
-        return self.rooms.iteritems()
+        return self.rooms.items()
 
     def get_room(self, room_id):
         """
@@ -217,8 +215,7 @@ class GameServersControllerModel(Model):
         self.rooms[room_id] = room
         return room
 
-    @coroutine
-    def instantiate(self, name, game_id, game_version, game_server_name, deployment, room):
+    async def instantiate(self, name, game_id, game_version, game_server_name, deployment, room):
 
         log_file_path = os.path.join(self.logs_path, name + ".log")
 
@@ -232,14 +229,12 @@ class GameServersControllerModel(Model):
         self.sub.subscribe(gs.pub, ["server_updated"])
         self.pub.notify("new_server", server=gs)
 
-        raise Return(gs)
+        return gs
 
-    @coroutine
-    def server_updated(self, server):
+    async def server_updated(self, server):
         self.pub.notify("server_updated", server=server)
 
-    @coroutine
-    def spawn(self, gamespace, room_id, settings, game_name, game_version, game_server_name, deployment):
+    async def spawn(self, gamespace, room_id, settings, game_name, game_version, game_server_name, deployment):
         name = game_name + "_" + game_server_name + "_" + str(room_id)
 
         # register a new room
@@ -259,7 +254,7 @@ class GameServersControllerModel(Model):
             if "key" in e and "value" in e
         }
 
-        instance = yield self.instantiate(name, game_name, game_version, game_server_name, deployment, room)
+        instance = await self.instantiate(name, game_name, game_version, game_server_name, deployment, room)
 
         app_path = os.path.join(self.binaries_path, GameServersControllerModel.RUNTIME, game_name, game_version, deployment)
         
@@ -267,13 +262,11 @@ class GameServersControllerModel(Model):
         sock_path = os.path.join(self.sock_path, sock_name)
 
         try:
-            settings = yield instance.spawn(app_path, binary, sock_path, arguments, env, room)
+            settings = await instance.spawn(app_path, binary, sock_path, arguments, env, room)
         except gameserver.SpawnError as e:
             logging.error("Failed to spawn server instance: " + e.message)
-            import sys
-            t, v, tb = sys.exc_info()
-            yield instance.crashed("Failed to spawn server instance: " + e.message)
-            raise t, v, tb
+            await instance.crashed("Failed to spawn server instance: " + e.message)
+            raise
 
         logging.info("New server instance spawned: " + name)
 
@@ -285,7 +278,7 @@ class GameServersControllerModel(Model):
             "settings": settings
         }
 
-        raise Return(result)
+        return result
 
     def __do_remove_server__(self, room_id, server_name):
         self.servers_by_room_id.pop(room_id, None)
@@ -294,8 +287,7 @@ class GameServersControllerModel(Model):
         if instance:
             instance.dispose()
 
-    @coroutine
-    def server_stopped(self, instance):
+    async def server_stopped(self, instance):
         self.sub.unsubscribe(instance.pub, ["server_updated"])
         self.pub.notify("server_removed", server=instance)
 
@@ -308,22 +300,19 @@ class GameServersControllerModel(Model):
         # the actual game server instance, however, will be removed much later to allow admins to intervene
         # and inspect the status for instances
 
-        tornado.ioloop.IOLoop.current().add_timeout(
+        IOLoop.current().add_timeout(
             datetime.timedelta(minutes=2),
             self.__do_remove_server__, room_id, server_name)
 
-    @coroutine
-    def terminate_all(self, kill=False):
-        yield [s.terminate(kill=kill) for name, s in self.servers_by_name.iteritems()]
+    async def terminate_all(self, kill=False):
+        await multi([s.terminate(kill=kill) for name, s in self.servers_by_name.items()])
 
-    @coroutine
-    def started(self, application):
+    async def started(self, application):
         self.clear_logs_cb.start()
 
-    @coroutine
-    def stopped(self):
+    async def stopped(self):
         self.clear_logs_cb.stop()
-        yield self.terminate_all(kill=True)
+        await self.terminate_all(kill=True)
 
 
 class PoolError(Exception):

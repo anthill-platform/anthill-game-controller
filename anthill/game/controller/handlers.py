@@ -1,13 +1,11 @@
 
-from tornado.gen import coroutine, Return
 from tornado.web import HTTPError, stream_request_body
 
-from common.internal import InternalError
-from common.access import internal
-from common.handler import AuthenticatedHandler
+from anthill.common.access import internal
+from anthill.common.handler import AuthenticatedHandler
 
-from model.gameserver import SpawnError
-from model.delivery import DeliveryError
+from . model.gameserver import SpawnError
+from . model.delivery import DeliveryError
 
 import ujson
 
@@ -18,13 +16,12 @@ class InternalHandler(object):
 
 
 class DeploymentHandler(AuthenticatedHandler):
-    @coroutine
     @internal
-    def delete(self, game_name, game_version, deployment_id):
+    async def delete(self, game_name, game_version, deployment_id):
         delivery = self.application.delivery
 
         try:
-            yield delivery.delete(game_name, game_version, deployment_id)
+            await delivery.delete(game_name, game_version, deployment_id)
         except DeliveryError as e:
             raise HTTPError(e.code, e.message)
 
@@ -35,41 +32,36 @@ class DeliverDeploymentHandler(AuthenticatedHandler):
         super(DeliverDeploymentHandler, self).__init__(application, request, **kwargs)
         self.delivery = None
 
-    @coroutine
     @internal
-    def put(self, *args, **kwargs):
+    async def put(self, *args, **kwargs):
         try:
-            yield self.delivery.complete()
+            await self.delivery.complete()
         except DeliveryError as e:
             raise HTTPError(e.code, e.message)
 
-    @coroutine
-    def data_received(self, chunk):
-        yield self.delivery.data_received(chunk)
+    async def data_received(self, chunk):
+        await self.delivery.data_received(chunk)
 
-    @coroutine
-    def prepare(self):
+    async def prepare(self):
         self.request.connection.set_max_body_size(1073741824)
-        yield super(DeliverDeploymentHandler, self).prepare()
+        await super(DeliverDeploymentHandler, self).prepare()
 
-    @coroutine
     @internal
-    def prepared(self, game_name, game_version, deployment_id, *args, **kwargs):
+    async def prepared(self, game_name, game_version, deployment_id, *args, **kwargs):
         deployment_hash = self.get_argument("deployment_hash")
 
         delivery = self.application.delivery
 
         try:
-            self.delivery = yield delivery.deliver(
+            self.delivery = await delivery.deliver(
                 game_name, game_version, deployment_id, deployment_hash)
         except DeliveryError as e:
             raise HTTPError(e.code, e.message)
 
 
 class SpawnHandler(AuthenticatedHandler):
-    @coroutine
     @internal
-    def post(self):
+    async def post(self):
 
         game_name = self.get_argument("game_id")
         game_version = self.get_argument("game_version")
@@ -86,7 +78,7 @@ class SpawnHandler(AuthenticatedHandler):
         gs_controller = self.application.gs_controller
 
         try:
-            result = yield gs_controller.spawn(
+            result = await gs_controller.spawn(
                 gamespace, room_id, settings, game_name,
                 game_version, game_server_name, deployment)
         except SpawnError as e:
@@ -98,9 +90,8 @@ class SpawnHandler(AuthenticatedHandler):
 
 
 class TerminateHandler(AuthenticatedHandler):
-    @coroutine
     @internal
-    def post(self):
+    async def post(self):
         room_id = self.get_argument("room_id")
 
         gs_controller = self.application.gs_controller
@@ -109,13 +100,12 @@ class TerminateHandler(AuthenticatedHandler):
         if not s:
             raise HTTPError(404, "No such server")
 
-        yield s.terminate()
+        await s.terminate()
 
 
 class ExecuteStdInHandler(AuthenticatedHandler):
-    @coroutine
     @internal
-    def post(self):
+    async def post(self):
         room_id = self.get_argument("room_id")
         command = self.get_argument("command")
 
@@ -125,7 +115,7 @@ class ExecuteStdInHandler(AuthenticatedHandler):
         if not s:
             raise HTTPError(404, "No such server")
 
-        yield s.send_stdin(command)
+        await s.send_stdin(command)
 
 
 class HeartbeatHandler(AuthenticatedHandler):

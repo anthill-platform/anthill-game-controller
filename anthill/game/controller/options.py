@@ -1,5 +1,5 @@
 
-from common.options import define
+from anthill.common.options import define
 
 # Main
 
@@ -9,7 +9,7 @@ define("host",
        type=str)
 
 define("gs_host",
-       default="localhost",
+       default="dev2.brainout.org",
        help="Public hostname without protocol and port (for application usage)",
        type=str)
 

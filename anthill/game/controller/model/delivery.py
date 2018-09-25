@@ -1,10 +1,9 @@
 
-from tornado.gen import coroutine, Return
 from tornado.concurrent import run_on_executor
 from concurrent.futures import ThreadPoolExecutor
 
-from common.model import Model
-from controller import GameServersControllerModel
+from anthill.common.model import Model
+from . controller import GameServersControllerModel
 
 import os
 import hashlib
@@ -44,8 +43,7 @@ class Delivery(object):
         self.deployment_file.write(chunk)
         self.deployment_hash_local.update(chunk)
 
-    @coroutine
-    def complete(self):
+    async def complete(self):
         calculated_hash = self.deployment_hash_local.hexdigest()
 
         if calculated_hash != self.deployment_hash:
@@ -101,7 +99,7 @@ class Delivery(object):
                     self.game_name, self.game_version, self.deployment_id, str(e)
                 ))
 
-        yield self.__unpack__(self.deployment_path, app_runtime_path)
+        await self.__unpack__(self.deployment_path, app_runtime_path)
 
     @run_on_executor
     def __unpack__(self, extract, where):
@@ -183,8 +181,7 @@ class Delivery(object):
             self.binaries_path, GameServersControllerModel.DEPLOYMENTS, self.game_name, self.game_version,
             str(self.deployment_id) + ".zip")
 
-    @coroutine
-    def init(self):
+    async def init(self):
         try:
             self.deployment_file = open(self.deployment_path, "w")
         except Exception as e:
@@ -198,11 +195,10 @@ class DeliveryModel(Model):
         super(DeliveryModel, self).__init__()
         self.binaries_path = gs_controller.binaries_path
 
-    @coroutine
-    def deliver(self, game_name, game_version, deployment_id, deployment_hash):
+    async def deliver(self, game_name, game_version, deployment_id, deployment_hash):
         delivery = Delivery(self.binaries_path, game_name, game_version, deployment_id, deployment_hash)
-        yield delivery.init()
-        raise Return(delivery)
+        await delivery.init()
+        return delivery
 
     def delete(self, game_name, game_version, deployment_id):
         delivery = Delivery(self.binaries_path, game_name, game_version, deployment_id)

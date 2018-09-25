@@ -1,20 +1,16 @@
 
-from common.options import options
+from anthill.common.options import options
+from anthill.common import server, access
 
-import common.server
-import common.access
-import common.sign
-import handlers as h
-
-from model.controller import GameServersControllerModel
-from model.delivery import DeliveryModel
-from model.heartbeat import HeartbeatModel
-
-import admin
-import options as _opts
+from . model.controller import GameServersControllerModel
+from . model.delivery import DeliveryModel
+from . model.heartbeat import HeartbeatModel
+from . import handlers as h
+from . import admin
+from . import options as _opts
 
 
-class GameControllerServer(common.server.Server):
+class GameControllerServer(server.Server):
     # noinspection PyShadowingNames
     def __init__(self):
         super(GameControllerServer, self).__init__()
@@ -60,6 +56,6 @@ class GameControllerServer(common.server.Server):
 
 
 if __name__ == "__main__":
-    stt = common.server.init()
-    common.access.AccessToken.init([common.access.public()])
-    common.server.start(GameControllerServer)
+    stt = server.init()
+    access.AccessToken.init([access.public()])
+    server.start(GameControllerServer)

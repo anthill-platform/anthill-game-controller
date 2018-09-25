@@ -1,6 +1,6 @@
 
 from psutil import virtual_memory, cpu_percent
-from common.model import Model
+from anthill.common.model import Model
 
 
 class HeartbeatModel(Model):

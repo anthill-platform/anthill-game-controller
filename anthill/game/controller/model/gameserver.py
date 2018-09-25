@@ -2,12 +2,11 @@
 from tornado.ioloop import IOLoop
 
 from concurrent.futures import ThreadPoolExecutor
-from tornado.concurrent import run_on_executor
 from tornado.gen import with_timeout, TimeoutError, sleep, Future
 from tornado.ioloop import PeriodicCallback
 from tornado.process import Subprocess
 
-from anthill.common import events, jsonrpc
+from anthill.common import events, jsonrpc, run_on_executor
 
 from . import msg
 

@@ -1,14 +1,4 @@
-
-from tornado.ioloop import IOLoop
-
-from concurrent.futures import ThreadPoolExecutor
-from tornado.gen import with_timeout, TimeoutError, sleep, Future
-from tornado.ioloop import PeriodicCallback
-from tornado.process import Subprocess
-
-from anthill.common import events, jsonrpc, run_on_executor
-
-from . import msg
+# coding=utf-8
 
 import datetime
 import logging
@@ -16,6 +6,21 @@ import mmap
 import os
 import signal
 import ujson
+
+import tornado.ioloop
+
+from concurrent.futures import ThreadPoolExecutor
+from tornado.concurrent import run_on_executor
+from tornado.gen import coroutine, Return, with_timeout, TimeoutError, sleep, Future
+from tornado.ioloop import PeriodicCallback
+from tornado.process import Subprocess
+
+import common.discover
+import common.events
+import common.jsonrpc
+import msg
+
+from . import unix_domain_sockets_enabled
 
 
 class SpawnError(Exception):
@@ -56,12 +61,12 @@ class GameServer(object):
 
         self.name = name
         self.room = room
-        self.ioloop = IOLoop.current()
+        self.ioloop = tornado.ioloop.IOLoop.instance()
         self.pipe = None
         self.status = GameServer.STATUS_NONE
         self.msg = None
         self.on_stopped = None
-        self.pub = events.Publisher()
+        self.pub = common.events.Publisher()
         self.init_future = None
         self.read_buffer = bytearray(GameServer.READ_BUFFER_SIZE)
         self.read_mem = memoryview(self.read_buffer)
@@ -76,7 +81,7 @@ class GameServer(object):
         self.ports = []
 
         # get ports from the pool
-        for i in range(0, ports_num):
+        for i in xrange(0, ports_num):
             self.ports.append(gs_controller.pool.acquire())
 
         check_period = game_settings.get("check_period", GameServer.CHECK_PERIOD) * 1000
@@ -87,7 +92,7 @@ class GameServer(object):
         self.log_path = logs_path
         self.log_count = 0
         self.log_dirty = False
-        self.log = open("{0}.{1}".format(self.log_path, self.log_count), "wb", 1, encoding="utf-8")
+        self.log = open("{0}.{1}".format(self.log_path, self.log_count), "wb", 1)
         self.log_size = 0
         self.logs_max_file_size = logs_max_file_size
 
@@ -110,47 +115,50 @@ class GameServer(object):
             self.check_cb.stop()
             return
 
-        IOLoop.current().add_callback(self.__check_status__)
+        tornado.ioloop.IOLoop.current().add_callback(self.__check_status__)
 
-    async def __check_status__(self):
+    @coroutine
+    def __check_status__(self):
         try:
-            response = await self.msg.send_request(self, "status")
-        except jsonrpc.JsonRPCTimeout:
+            response = yield self.msg.send_request(self, "status")
+        except common.jsonrpc.JsonRPCTimeout:
             self.__notify__(u"Timeout to check status")
-            await self.terminate(False)
+            yield self.terminate(False)
         else:
             if not isinstance(response, dict):
                 status = "not_a_dict"
             else:
                 status = response.get("status", "bad")
-            self.__notify__(u"Status: " + str(status))
+            self.__notify__(u"Status: " + unicode(status))
             if status != "ok":
                 self.__notify__(u"Bad status")
-                await self.terminate(False)
+                yield self.terminate(False)
 
     # noinspection PyUnusedLocal
-    async def update_settings(self, result, settings, *args, **kwargs):
+    @coroutine
+    def update_settings(self, result, settings, *args, **kwargs):
         self.__notify_updated__()
 
-    async def inited(self, settings):
+    @coroutine
+    def inited(self, settings):
 
         self.__handle__("check_deployment", self.__check_deployment__)
 
-        await self.room.update_settings(settings)
+        yield self.room.update_settings(settings)
 
         self.__notify__(u"Inited.")
         self.set_status(GameServer.STATUS_RUNNING)
         self.check_cb.start()
 
-        return {
+        raise Return({
             "status": "OK"
-        }
+        })
 
     def __del__(self):
         logging.info(u"[{0}] Server instance has been deleted".format(self.name))
 
-    # noinspection PyMethodMayBeStatic
-    async def __prepare_room__(self, room):
+    @coroutine
+    def __prepare__(self, room):
         room_settings = room.room_settings()
         server_settings = room.server_settings()
         game_settings = room.game_settings()
@@ -166,7 +174,7 @@ class GameServer(object):
         }
 
         if other_settings:
-            for key, value in other_settings.items():
+            for key, value in other_settings.iteritems():
                 if isinstance(value, dict):
                     env[key] = ujson.dumps(value)
                 else:
@@ -180,10 +188,11 @@ class GameServer(object):
         if discover:
             env["discovery_services"] = ujson.dumps(discover, escape_forward_slashes=False)
 
-        return env
+        raise Return(env)
 
     # noinspection PyUnusedLocal
-    async def __cb_stopped__(self, *args, **kwargs):
+    @coroutine
+    def __cb_stopped__(self, *args, **kwargs):
         if self.init_future is None:
             return
 
@@ -192,7 +201,8 @@ class GameServer(object):
         self.init_future.set_exception(SpawnError(u"Stopped before 'inited' command received."))
         self.init_future = None
 
-    async def __cb_inited__(self, settings=None):
+    @coroutine
+    def __cb_inited__(self, settings=None):
         if self.init_future is None:
             return
 
@@ -204,8 +214,8 @@ class GameServer(object):
         self.init_future = None
 
         # we're done initializing
-        res_ = await self.inited(settings)
-        return res_
+        res_ = yield self.inited(settings)
+        raise Return(res_)
 
     def __wait_for_init_future__(self):
         """
@@ -226,7 +236,8 @@ class GameServer(object):
 
         return self.init_future
 
-    async def spawn(self, path, binary, sock_path, cmd_arguments, env, room):
+    @coroutine
+    def spawn(self, path, binary, sock_path, cmd_arguments, env, room):
 
         if not os.path.isdir(path):
             raise SpawnError(u"Game server is not deployed yet")
@@ -237,9 +248,13 @@ class GameServer(object):
         if not isinstance(env, dict):
             raise SpawnError(u"env is not a dict")
 
-        env.update((await self.__prepare_room__(room)))
+        env.update((yield self.__prepare__(room)))
 
-        await self.listen(sock_path)
+        if unix_domain_sockets_enabled():
+            yield self.listen(sock_path)
+        else:
+            # on Windows, there is no Unix Domain Sockets, so random port is used instead
+            sock_path = yield self.listen()
 
         arguments = [
             # application binary
@@ -257,7 +272,7 @@ class GameServer(object):
 
         self.__notify__(u"Environment:")
 
-        for name, value in env.items():
+        for name, value in env.iteritems():
             self.__notify__(u"  " + name + u" = " + value + u";")
 
         self.set_status(GameServer.STATUS_INITIALIZING)
@@ -268,7 +283,7 @@ class GameServer(object):
         except OSError as e:
             reason = u"Failed to spawn a server: " + e.args[1]
             self.__notify__(reason)
-            await self.crashed(reason, exitcode=e.errno)
+            yield self.crashed(reason, exitcode=e.errno)
 
             raise SpawnError(reason)
         else:
@@ -283,23 +298,24 @@ class GameServer(object):
         # wait, until the 'init' command is received
         # or, the server is stopped (that's bad) earlier
         try:
-            settings = await with_timeout(datetime.timedelta(seconds=GameServer.SPAWN_TIMEOUT), f)
+            settings = yield with_timeout(datetime.timedelta(seconds=GameServer.SPAWN_TIMEOUT), f)
 
             # if the result is an Exception, that means
             # the 'wait' told us so
             if isinstance(settings, Exception):
                 raise settings
 
-            return settings
+            raise Return(settings)
         except TimeoutError:
             self.__notify__(u"Timeout to spawn.")
-            await self.terminate(True)
+            yield self.terminate(True)
             raise SpawnError(u"Failed to spawn a game server: timeout")
 
         finally:
             self.init_future = None
 
-    async def send_stdin(self, data):
+    @coroutine
+    def send_stdin(self, data):
         self.pipe.stdin.write(data.encode('ascii', 'ignore') + "\n")
 
     # noinspection PyBroadException
@@ -322,20 +338,21 @@ class GameServer(object):
         else:
             return None
 
-    async def terminate(self, kill=False):
+    @coroutine
+    def terminate(self, kill=False):
         self.__notify__(u"Terminating... (kill={0})".format(kill))
 
         kill_proc = self.__kill__() if kill else self.__terminate__()
 
         try:
-            error = await with_timeout(datetime.timedelta(seconds=GameServer.TERMINATE_TIMEOUT), kill_proc)
+            error = yield with_timeout(datetime.timedelta(seconds=GameServer.TERMINATE_TIMEOUT), kill_proc)
         except TimeoutError:
             self.__notify__(u"Terminate timeout.")
 
             if kill:
-                await self.__stopped__(exitcode=999)
+                yield self.__stopped__(exitcode=999)
             else:
-                await self.terminate(kill=True)
+                yield self.terminate(kill=True)
         else:
             if error:
                 self.__notify__(u"Failed to terminate: " + str(error))
@@ -345,7 +362,8 @@ class GameServer(object):
         if self.log is not None:
             self.log.flush()
 
-    async def stream_log(self, process_line):
+    @coroutine
+    def stream_log(self, process_line):
         """
         This coroutine streams associated log file by calling process_line(server_name, line) each
         time a new line appears (essentially acts like "tail -f").
@@ -385,7 +403,7 @@ class GameServer(object):
                     # that's not the last file in the chain, switch to the next one
                     f.close()
                     continue
-                await sleep(0.5)
+                yield sleep(0.5)
                 continue
             if not process_line(self.name, line):
                 return
@@ -439,7 +457,7 @@ class GameServer(object):
 
     # noinspection PyBroadException
     def log_contains_text(self, text):
-        for i in range(0, self.log_count + 1):
+        for i in xrange(0, self.log_count + 1):
             try:
                 with open("{0}.{1}".format(self.log_path, i)) as f:
                     s = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
@@ -454,12 +472,14 @@ class GameServer(object):
 
         self.ioloop.add_callback(self.__stopped__, exitcode=exitcode)
 
-    async def crashed(self, reason, exitcode=999):
+    @coroutine
+    def crashed(self, reason, exitcode=999):
         self.__notify__(reason)
-        await self.__stopped__(GameServer.STATUS_ERROR, exitcode=exitcode)
+        yield self.__stopped__(GameServer.STATUS_ERROR, exitcode=exitcode)
 
     # noinspection PyUnusedLocal
-    async def __stopped__(self, reason=STATUS_STOPPED, exitcode=0):
+    @coroutine
+    def __stopped__(self, reason=STATUS_STOPPED, exitcode=0):
         if self.status == reason:
             return
 
@@ -470,17 +490,18 @@ class GameServer(object):
         if self.log is not None:
             self.log.flush()
 
-        await self.gs_controller.server_stopped(self)
+        yield self.gs_controller.server_stopped(self)
 
         # notify the master server that this server is died
         try:
-            await self.command(self, "stopped")
-        except jsonrpc.JsonRPCError:
+            yield self.command(self, "stopped")
+        except common.jsonrpc.JsonRPCError:
             logging.exception("Failed to notify the server is stopped!")
 
-        await self.release()
+        yield self.release()
 
-    async def release(self):
+    @coroutine
+    def release(self):
         if self.log is None:
             return
 
@@ -513,7 +534,7 @@ class GameServer(object):
         self.log = None
 
         if self.msg:
-            await self.msg.release()
+            yield self.msg.release()
 
         logging.info(u"[{0}] Server has been released".format(self.name))
 
@@ -537,7 +558,7 @@ class GameServer(object):
             return
 
         self.log.write(data)
-        self.log.write("\n".encode("utf-8"))
+        self.log.write("\n")
 
     def __handle__(self, action, handlers):
         if self.handlers is not None:
@@ -547,7 +568,8 @@ class GameServer(object):
         if self.handlers is not None:
             self.handlers.pop(action)
 
-    async def __check_deployment__(self):
+    @coroutine
+    def __check_deployment__(self):
 
         """
         Checks if the current deployment of the game server is still up to date
@@ -556,39 +578,43 @@ class GameServer(object):
         """
 
         try:
-            response = await self.room.notify(
+            response = yield self.room.notify(
                 "check_deployment",
                 game_name=self.game_name,
                 game_version=self.game_version,
                 deployment_id=self.deployment)
         except NotifyError as e:
-            raise jsonrpc.JsonRPCError(e.code, e.message)
+            raise common.jsonrpc.JsonRPCError(e.code, e.message)
 
-        return response
+        raise Return(response)
 
     # noinspection PyUnusedLocal
-    async def command(self, context, method, *args, **kwargs):
+    @coroutine
+    def command(self, context, method, *args, **kwargs):
         if (self.handlers is not None) and (method in self.handlers):
             # if this action is registered
             # inside of the internal handlers
             # then catch it
-            response = await self.handlers[method](*args, **kwargs)
+            response = yield self.handlers[method](*args, **kwargs)
         else:
             try:
-                response = await self.room.notify(method, *args, **kwargs)
+                response = yield self.room.notify(method, *args, **kwargs)
             except NotifyError as e:
-                raise jsonrpc.JsonRPCError(e.code, e.message)
+                raise common.jsonrpc.JsonRPCError(e.code, e.message)
 
             # if there's a method with such action name, call it
             if (not method.startswith("_")) and hasattr(self, method):
-                await getattr(self, method)(response, *args, **kwargs)
+                yield getattr(self, method)(response, *args, **kwargs)
 
-        return response or {}
+        raise Return(response or {})
 
-    async def listen(self, sock_path):
+    @coroutine
+    def listen(self, sock_path=None):
         self.msg = msg.ProcessMessages(path=sock_path)
         self.msg.set_receive(self.command)
         try:
-            await self.msg.server()
-        except jsonrpc.JsonRPCError as e:
+            result = yield self.msg.server()
+        except common.jsonrpc.JsonRPCError as e:
             raise SpawnError(e.message)
+        else:
+            raise Return(result)

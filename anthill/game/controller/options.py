@@ -1,5 +1,6 @@
 
 from anthill.common.options import define
+import os
 
 # Main
 
@@ -9,7 +10,7 @@ define("host",
        type=str)
 
 define("gs_host",
-       default="dev2.brainout.org",
+       default="localhost",
        help="Public hostname without protocol and port (for application usage)",
        type=str)
 
@@ -25,23 +26,44 @@ define("name",
 
 # Game servers
 
-define("sock_path",
-       default="/tmp",
-       help="Location of the unix sockets game servers communicate with.",
-       type=str,
-       group="gameservers")
+if os.name == "nt":
+    # Windows
+    define("sock_path",
+           default=None,
+           help="Location of the unix sockets game servers communicate with.",
+           type=str,
+           group="gameservers")
 
-define("binaries_path",
-       default="/usr/local/anthill/game-controller-binaries",
-       help="Location of game server binaries.",
-       type=str,
-       group="gameservers")
+    define("binaries_path",
+           default="C:/Anthill/game-controller-binaries",
+           help="Location of game server binaries.",
+           type=str,
+           group="gameservers")
 
-define("logs_path",
-       default="/usr/local/var/log/gameservers",
-       help="Location for game server output logs.",
-       type=str,
-       group="gameservers")
+    define("logs_path",
+           default="C:/Anthill/gameservers",
+           help="Location for game server output logs.",
+           type=str,
+           group="gameservers")
+else:
+    # Unix
+    define("sock_path",
+           default="/tmp",
+           help="Location of the unix sockets game servers communicate with.",
+           type=str,
+           group="gameservers")
+
+    define("binaries_path",
+           default="/usr/local/anthill/game-controller-binaries",
+           help="Location of game server binaries.",
+           type=str,
+           group="gameservers")
+
+    define("logs_path",
+           default="/usr/local/var/log/gameservers",
+           help="Location for game server output logs.",
+           type=str,
+           group="gameservers")
 
 define("logs_keep_time",
        default=86400,

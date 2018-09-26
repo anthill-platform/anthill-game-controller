@@ -15,6 +15,8 @@ import random
 import datetime
 import time
 
+from . import unix_domain_sockets_enabled
+
 
 class Room(object):
     """
@@ -259,7 +261,11 @@ class GameServersControllerModel(Model):
         app_path = os.path.join(self.binaries_path, GameServersControllerModel.RUNTIME, game_name, game_version, deployment)
         
         sock_name = str(os.getpid()) + "_" + name
-        sock_path = os.path.join(self.sock_path, sock_name)
+
+        if unix_domain_sockets_enabled():
+            sock_path = os.path.join(self.sock_path, sock_name)
+        else:
+            sock_path = None
 
         try:
             settings = await instance.spawn(app_path, binary, sock_path, arguments, env, room)

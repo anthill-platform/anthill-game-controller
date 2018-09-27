@@ -183,7 +183,7 @@ class Delivery(object):
 
     async def init(self):
         try:
-            self.deployment_file = open(self.deployment_path, "w")
+            self.deployment_file = open(self.deployment_path, "wb")
         except Exception as e:
             raise DeliveryError(500, "Failed to deploy {0}/{1}/{2}: {3}".format(
                 self.game_name, self.game_version, self.deployment_id, str(e)

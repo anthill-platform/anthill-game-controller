@@ -87,7 +87,7 @@ class GameServer(object):
         self.log_path = logs_path
         self.log_count = 0
         self.log_dirty = False
-        self.log = open("{0}.{1}".format(self.log_path, self.log_count), "wb", 1, encoding="utf-8")
+        self.log = open("{0}.{1}".format(self.log_path, self.log_count), "wb", 1)
         self.log_size = 0
         self.logs_max_file_size = logs_max_file_size
 
@@ -423,13 +423,13 @@ class GameServer(object):
 
         while True:
             err_read_num = self.pipe.stderr.read_from_fd(self.read_buffer)
-            if err_read_num is None:
+            if err_read_num is None or err_read_num == 0:
                 break
             self.__write_log__(self.read_mem[0:err_read_num])
 
         while True:
             str_read_num = self.pipe.stdout.read_from_fd(self.read_buffer)
-            if str_read_num is None:
+            if str_read_num is None or err_read_num == 0:
                 break
             self.__write_log__(self.read_mem[0:str_read_num])
 
@@ -455,6 +455,8 @@ class GameServer(object):
     def __exit_callback__(self, exitcode):
         self.check_cb.stop()
         self.read_cb.stop()
+
+        self.__recv__()
 
         self.ioloop.add_callback(self.__stopped__, exitcode=exitcode)
 
@@ -540,8 +542,11 @@ class GameServer(object):
         if self.log is None:
             return
 
+        if isinstance(data, str):
+            data = data.encode()
+
         self.log.write(data)
-        self.log.write("\n".encode("utf-8"))
+        self.log.write("\n".encode())
 
     def __handle__(self, action, handlers):
         if self.handlers is not None:

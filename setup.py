@@ -2,12 +2,13 @@
 from setuptools import setup, find_packages
 
 DEPENDENCIES = [
-    "anthill-common>=0.1.0"
+    "anthill-common"
 ]
 
 setup(
     name='anthill-game-controller',
-    version='0.1.0',
+    setup_requires=["pypigit-version"],
+    git_version="0.1.0",
     description='Game servers hosting & matchmaking service for Anthill platform Edit Add topics',
     author='desertkun',
     license='MIT',

@@ -244,11 +244,13 @@ class GameServersControllerModel(Model):
 
         game_settings = room.game_settings()
 
+        binary_option = "binary_win" if os.name == "nt" else "binary"
+
         try:
-            binary = game_settings["binary"]
+            binary = game_settings[binary_option]
             arguments = game_settings["arguments"]
         except (KeyError, ValueError) as e:
-            raise gameserver.SpawnError("Failed to spawn game server: " + e.message)
+            raise gameserver.SpawnError("Failed to spawn game server, missing option: {0}".format(e))
 
         env = {
             e["key"]: e["value"]

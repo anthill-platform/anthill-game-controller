@@ -1,10 +1,14 @@
-
 from tornado.ioloop import IOLoop
 
 from concurrent.futures import ThreadPoolExecutor
 from tornado.gen import with_timeout, TimeoutError, sleep, Future
 from tornado.ioloop import PeriodicCallback
 from tornado.process import Subprocess
+
+# for windows
+from subprocess import Popen, PIPE, call
+from threading import Thread
+from queue import Queue, Empty
 
 from anthill.common import events, jsonrpc, run_on_executor
 
@@ -81,7 +85,10 @@ class GameServer(object):
 
         check_period = game_settings.get("check_period", GameServer.CHECK_PERIOD) * 1000
 
-        self.read_cb = PeriodicCallback(self.__recv__, GameServer.READ_PERIOD_MS)
+        self.q_stdout = self.q_stderr = None
+        # noinspection SpellCheckingInspection
+        self.recv_cb = self.__recv_nt__ if os.name == "nt" else self.__recv__
+        self.read_cb = PeriodicCallback(self.recv_cb, GameServer.READ_PERIOD_MS)
         self.check_cb = PeriodicCallback(self.__check__, check_period)
 
         self.log_path = logs_path
@@ -226,6 +233,45 @@ class GameServer(object):
 
         return self.init_future
 
+    # noinspection SpellCheckingInspection
+    @staticmethod
+    def __nt_popen_and_call__(on_start, on_exit, *popen_args, **popen_kw_args):
+
+        # noinspection SpellCheckingInspection
+        def run_in_thread(on_start_thread, on_exit_thread, popen_args_thread, popen_kw_args_thread):
+            proc = Popen(*popen_args_thread, **popen_kw_args_thread)
+
+            q_stdout = Queue()
+            q_stderr = Queue()
+
+            def enqueue_output(out, queue):
+                while True:
+                    line = out.readline()
+                    if line != '':
+                        queue.put(line)
+                    else:
+                        break
+                out.close()
+
+            t_stdout = Thread(target=enqueue_output, args=(proc.stdout, q_stdout))
+            t_stdout.daemon = True
+            t_stdout.start()
+
+            t_stderr = Thread(target=enqueue_output, args=(proc.stderr, q_stderr))
+            t_stderr.daemon = True
+            t_stderr.start()
+
+            on_start_thread(proc, q_stdout, q_stderr)
+
+            proc.wait()
+            on_exit_thread()
+
+            return
+
+        thread = Thread(target=run_in_thread, args=(on_start, on_exit, popen_args, popen_kw_args))
+        thread.daemon = True
+        thread.start()
+
     async def spawn(self, path, binary, sock_path, cmd_arguments, env, room):
 
         if not os.path.isdir(path):
@@ -254,6 +300,7 @@ class GameServer(object):
             ",".join(str(port) for port in self.ports)
         ]
         # and then custom arguments
+        # noinspection PyUnresolvedReferences
         arguments.extend(cmd_arguments)
 
         cmd = " ".join(arguments)
@@ -266,9 +313,35 @@ class GameServer(object):
 
         self.set_status(GameServer.STATUS_INITIALIZING)
 
+        sys_env = os.environ.copy()
+        sys_env.update(env)
+
         try:
-            self.pipe = Subprocess(cmd, shell=True, cwd=path, preexec_fn=os.setsid, env=env,
-                                   stdin=Subprocess.STREAM, stdout=Subprocess.STREAM, stderr=Subprocess.STREAM)
+            if os.name == "nt":
+                root_ioloop = IOLoop.current()
+
+                def on_start_cb(pipe, q_stdout, q_stderr):
+                    self.pipe = pipe
+                    self.q_stdout = q_stdout
+                    self.q_stderr = q_stderr
+                    self.read_cb.start()
+
+                def on_start(*args):
+                    root_ioloop.spawn_callback(on_start_cb, *args)
+
+                def on_exit():
+                    root_ioloop.spawn_callback(self.__exit_callback__)
+
+                GameServer.__nt_popen_and_call__(
+                    on_start, on_exit,
+                    cmd, shell=True, cwd=path, env=sys_env,
+                    stdin=PIPE, stdout=PIPE, stderr=PIPE)
+            else:
+                self.pipe = Subprocess(
+                    cmd, shell=True, cwd=path, preexec_fn=os.setsid, env=sys_env,
+                    stdin=Subprocess.STREAM, stdout=Subprocess.STREAM, stderr=Subprocess.STREAM)
+                self.pipe.set_exit_callback(self.__exit_callback__)
+                self.read_cb.start()
         except OSError as e:
             reason = u"Failed to spawn a server: " + e.args[1]
             self.__notify__(reason)
@@ -276,9 +349,7 @@ class GameServer(object):
 
             raise SpawnError(reason)
         else:
-            self.pipe.set_exit_callback(self.__exit_callback__)
             self.set_status(GameServer.STATUS_LOADING)
-            self.read_cb.start()
 
         self.__notify__(u"Server '{0}' spawned, waiting for init command.".format(self.name))
 
@@ -310,7 +381,10 @@ class GameServer(object):
     @run_on_executor
     def __kill__(self):
         try:
-            os.killpg(os.getpgid(self.pipe.proc.pid), signal.SIGKILL)
+            if os.name == "nt":
+                call(['taskkill', '/F', '/T', '/PID', str(self.pipe.pid)])
+            else:
+                os.killpg(os.getpgid(self.pipe.proc.pid), signal.SIGKILL)
         except Exception as e:
             return str(e)
         else:
@@ -320,7 +394,10 @@ class GameServer(object):
     @run_on_executor
     def __terminate__(self):
         try:
-            os.killpg(os.getpgid(self.pipe.proc.pid), signal.SIGTERM)
+            if os.name == "nt":
+                call(['taskkill', '/F', '/T', '/PID', str(self.pipe.pid)])
+            else:
+                os.killpg(os.getpgid(self.pipe.proc.pid), signal.SIGTERM)
         except Exception as e:
             return str(e)
         else:
@@ -413,6 +490,38 @@ class GameServer(object):
 
             self.__notify__("Swapping log file: {0}".format(new_log_file))
 
+    def __recv_nt__(self):
+        """
+        This one if often called to poll the STREAM output of the game server
+        """
+
+        if self.status == GameServer.STATUS_STOPPED:
+            return
+
+        while True:
+            try:
+                line = self.q_stdout.get_nowait()
+            except Empty:
+                break
+            else:
+                self.__write_log__(line)
+
+        while True:
+            try:
+                line = self.q_stderr.get_nowait()
+            except Empty:
+                break
+            else:
+                self.__write_log__(line)
+
+        if self.log_dirty:
+            self.log_dirty = False
+
+            try:
+                self.log.flush()
+            except OSError:
+                pass
+
     def __recv__(self):
         """
         This one if often called to poll the STREAM output of the game server
@@ -452,11 +561,11 @@ class GameServer(object):
             except Exception:
                 continue
 
-    def __exit_callback__(self, exitcode):
+    def __exit_callback__(self, exitcode=1):
         self.check_cb.stop()
         self.read_cb.stop()
 
-        self.__recv__()
+        self.recv_cb()
 
         self.ioloop.add_callback(self.__stopped__, exitcode=exitcode)
 

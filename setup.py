@@ -7,6 +7,9 @@ DEPENDENCIES = [
 
 setup(
     name='anthill-game-controller',
+    package_data={
+      "anthill.game.controller": ["anthill/game/controller/sql", "anthill/game/controller/static"]
+    },
     setup_requires=["pypigit-version"],
     git_version="0.1.0",
     description='Game servers hosting & matchmaking service for Anthill platform Edit Add topics',

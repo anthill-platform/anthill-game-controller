@@ -66,6 +66,13 @@ class Room(object):
     def id(self):
         return self.room_id
 
+    @staticmethod
+    def __notify_retry_predicate__(e):
+        if isinstance(e, InternalError):
+            # on 4XX codes do not retry and error out immediately
+            return e.code < 500
+        return False
+
     async def notify(self, method, *args, **kwargs):
         """
         Notify the master server about actions, happened in the room
@@ -81,7 +88,8 @@ class Room(object):
                 return result
 
         try:
-            @retry(operation="notify room {0} action {1}".format(self.id(), method), max=5, delay=10)
+            @retry(operation="notify room {0} action {1}".format(self.id(), method), max=5, delay=10,
+                   predicate=Room.__notify_retry_predicate__)
             def do_try(room_id, gamespace):
                 return self.internal.request(
                     "game", "controller_action",

@@ -97,6 +97,7 @@ class GameServer(object):
         self.log = open("{0}.{1}".format(self.log_path, self.log_count), "wb", 1)
         self.log_size = 0
         self.logs_max_file_size = logs_max_file_size
+        self.released = False
 
     def is_running(self):
         return self.status == GameServer.STATUS_RUNNING
@@ -593,10 +594,13 @@ class GameServer(object):
         except jsonrpc.JsonRPCError:
             logging.exception("Failed to notify the server is stopped!")
 
+        # kill the server dead to force it to free up ports
+        await self.__kill__()
+
         await self.release()
 
     async def release(self):
-        if self.log is None:
+        if self.released:
             return
 
         # put back the ports acquired at spawn
@@ -631,6 +635,7 @@ class GameServer(object):
             await self.msg.release()
 
         logging.info(u"[{0}] Server has been released".format(self.name))
+        self.released = True
 
     def dispose(self):
 

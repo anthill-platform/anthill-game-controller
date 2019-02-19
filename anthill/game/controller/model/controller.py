@@ -14,6 +14,8 @@ import os
 import random
 import datetime
 import time
+import socket
+from contextlib import closing
 
 from . import unix_domain_sockets_enabled
 
@@ -340,15 +342,31 @@ class PortsPool(object):
     def __init__(self, port_from, port_to):
         self.ports = list(range(port_from, port_to))
 
+    @staticmethod
+    def check_port_busy(port):
+        with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as sock:
+            # noinspection PyBroadException
+            try:
+                sock.bind(("0.0.0.0", port))
+            except Exception:
+                return True
+            else:
+                return False
+
     def acquire(self):
 
         if not self.ports:
             raise PoolError("No ports in pool left")
 
-        try:
-            return self.ports.pop(random.randrange(len(self.ports)))
-        except KeyError:
-            raise PoolError("No ports in pool left")
+        for idx, port in enumerate(self.ports):
+            if PortsPool.check_port_busy(port):
+                continue
+            del self.ports[idx]
+            logging.info("PortsPool: Taking a port from pool: {0}".format(port))
+            return port
+
+        raise PoolError("No ports in pool left")
 
     def put(self, port):
+        logging.info("PortsPool: Putting a port back into the pool: {0}".format(port))
         self.ports.append(port)

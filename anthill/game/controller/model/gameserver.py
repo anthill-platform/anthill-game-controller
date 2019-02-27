@@ -69,6 +69,7 @@ class GameServer(object):
         self.init_future = None
         self.read_buffer = bytearray(GameServer.READ_BUFFER_SIZE)
         self.read_mem = memoryview(self.read_buffer)
+        self.status_check_timeout_counter = 0
 
         # message handlers
         self.handlers = {}
@@ -125,8 +126,17 @@ class GameServer(object):
             response = await self.msg.send_request(self, "status")
         except jsonrpc.JsonRPCTimeout:
             self.__notify__(u"Timeout to check status")
-            await self.terminate(False)
+            self.status_check_timeout_counter += 1
+            if self.status_check_timeout_counter > 5:
+                self.__notify__(u"Terminating after failing to check status for {0} tries.".format(
+                    self.status_check_timeout_counter))
+
+                await self.terminate(False)
         else:
+            if self.status_check_timeout_counter > 0:
+                self.__notify__(u"Obtained status after {0} tries.".format(self.status_check_timeout_counter))
+                self.status_check_timeout_counter = 0
+
             if not isinstance(response, dict):
                 status = "not_a_dict"
             else:

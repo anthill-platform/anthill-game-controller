@@ -1,12 +1,18 @@
 
+import os
+
+# supressed default anthill options which do not apply for game-controller
+os.environ["NODEFAULTOPS"] = "1"
+
 from anthill.common.options import options
 from anthill.common import server, access
 
 from . model.controller import GameServersControllerModel
 from . model.delivery import DeliveryModel
 from . model.heartbeat import HeartbeatModel
-from . import handlers as h
-from . import admin
+from . model.master import MasterConnectionModel
+from . model.debug import DebugControllerModel
+
 from . import options as _opts
 
 
@@ -16,6 +22,14 @@ class GameControllerServer(server.Server):
         super(GameControllerServer, self).__init__()
 
         self.gs_host = options.gs_host
+        self.debug_controller = DebugControllerModel(self)
+
+        self.master = MasterConnectionModel(
+            self,
+            username=options.connection_username,
+            password=options.connection_password,
+            gamespace=options.connection_gamespace,
+            region=options.region)
 
         self.gs_controller = GameServersControllerModel(
             self,
@@ -28,28 +42,29 @@ class GameControllerServer(server.Server):
             ports_pool_to=options.ports_pool_to)
 
         self.delivery = DeliveryModel(self.gs_controller)
-        self.heartbeat = HeartbeatModel(self)
-
-    def get_internal_handler(self):
-        return h.InternalHandler(self)
+        self.heartbeat = HeartbeatModel(self, options.dist_usage_path)
 
     def get_models(self):
-        return [self.gs_controller, self.delivery, self.heartbeat]
+        return [self.debug_controller, self.master, self.gs_controller, self.delivery, self.heartbeat]
 
-    def get_handlers(self):
-        return [
-            (r"/spawn", h.SpawnHandler),
-            (r"/terminate", h.TerminateHandler),
-            (r"/execute_stdin", h.ExecuteStdInHandler),
-            (r"/heartbeat", h.HeartbeatHandler),
-            (r"/game/(.+)/(.+)/deployments/(.+)/deliver", h.DeliverDeploymentHandler),
-            (r"/game/(.+)/(.+)/deployments/(.+)", h.DeploymentHandler)
-        ]
+    def get_host(self):
+        return self.gs_host
 
-    def get_admin_stream(self):
-        return {
-            "debug": admin.DebugController
-        }
+    def listen_server(self):
+        pass
+
+    def create_token_cache(self):
+        return None
+
+    def monitor_action(self, action_name, values, **tags):
+        pass
+
+    def monitor_rate(self, action_name, name_property, **tags):
+        pass
+
+    async def started(self):
+        self.init_discovery()
+        await self.models_started()
 
     def get_gs_host(self):
         return self.gs_host

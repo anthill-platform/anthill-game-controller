@@ -386,7 +386,8 @@ class GameServer(object):
             self.init_future = None
 
     async def send_stdin(self, data):
-        self.pipe.stdin.write(data.encode('ascii', 'ignore') + "\n")
+        self.pipe.stdin.write(data.encode('ascii', 'ignore') + b"\n")
+        self.pipe.stdin.flush()
 
     # noinspection PyBroadException
     @run_on_executor

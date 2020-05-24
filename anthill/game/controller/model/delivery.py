@@ -38,7 +38,6 @@ class Delivery(object):
 
         self.__init_paths__()
 
-    @run_on_executor
     def data_received(self, chunk):
         self.deployment_file.write(chunk)
         self.deployment_hash_local.update(chunk)
@@ -46,7 +45,7 @@ class Delivery(object):
     async def complete(self):
         calculated_hash = self.deployment_hash_local.hexdigest()
 
-        if calculated_hash != self.deployment_hash:
+        if self.deployment_hash is not None and calculated_hash != self.deployment_hash:
             raise DeliveryError(400, "Bad hash")
 
         try:
@@ -195,7 +194,7 @@ class DeliveryModel(Model):
         super(DeliveryModel, self).__init__()
         self.binaries_path = gs_controller.binaries_path
 
-    async def deliver(self, game_name, game_version, deployment_id, deployment_hash):
+    async def deliver(self, game_name, game_version, deployment_id, deployment_hash=None):
         delivery = Delivery(self.binaries_path, game_name, game_version, deployment_id, deployment_hash)
         await delivery.init()
         return delivery

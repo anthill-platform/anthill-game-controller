@@ -3,10 +3,25 @@ from anthill.common.options import define
 import os
 
 # Main
+define("api_version",
+       default="0.2",
+       help="Service API version to return to the users in header X-API-Version",
+       type=str)
 
-define("host",
-       default="http://localhost:9509",
-       help="Public hostname of this service",
+define("auth_key_public",
+       default="../.anthill-keys/anthill.pub",
+       help="Location of public key required for access token verification.",
+       type=str)
+
+define("debug",
+       default=False,
+       help="Is debug mode enabled (includes full stack trace)",
+       type=bool)
+
+define("discovery_service",
+       default="http://localhost:9502",
+       help="Discovery service location (if applicable).",
+       group="discovery",
        type=str)
 
 define("gs_host",
@@ -14,15 +29,34 @@ define("gs_host",
        help="Public hostname without protocol and port (for application usage)",
        type=str)
 
-define("listen",
-       default="port:9509",
-       help="Public hostname of this service for games (without protocol)",
-       type=str)
-
 define("name",
        default="game_controller",
        help="Service short name. Used to discover by discovery service.",
        type=str)
+
+define("region",
+       default="local",
+       help="Name of the region this host belongs to",
+       type=str,
+       group="gameservers")
+
+define("connection_username",
+       default="root",
+       help="Username (dev:xxx) with 'game_host' access, which will be used to obtain a connection to the Game Master",
+       type=str,
+       group="gameservers")
+
+define("connection_password",
+       default="anthill",
+       help="Password which will be used to obtain a connection to the Game Master",
+       type=str,
+       group="gameservers")
+
+define("connection_gamespace",
+       default="root",
+       help="Password which will be used to obtain a connection to the Game Master",
+       type=str,
+       group="gameservers")
 
 # Game servers
 
@@ -60,7 +94,7 @@ else:
            group="gameservers")
 
     define("logs_path",
-           default="/usr/local/var/log/gameservers",
+           default="/var/log/gameserver",
            help="Location for game server output logs.",
            type=str,
            group="gameservers")
@@ -88,4 +122,10 @@ define("ports_pool_to",
        default=40000,
        help="Port range end (for game servers)",
        type=int,
+       group="gameservers")
+
+define("dist_usage_path",
+       default="/",
+       help="A path used to calculate disk usage and later report to Game Master",
+       type=str,
        group="gameservers")

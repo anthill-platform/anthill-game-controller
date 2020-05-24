@@ -2,10 +2,12 @@
 from tornado.ioloop import PeriodicCallback
 from tornado.gen import multi
 from tornado.ioloop import IOLoop
+from tornado.httpclient import HTTPRequest
 
 from anthill.common.model import Model
+from anthill.common.server import Server
 from anthill.common.internal import Internal, InternalError
-from anthill.common import retry, events
+from anthill.common import retry, events, ElapsedTime
 
 from . import gameserver
 
@@ -28,10 +30,9 @@ class Room(object):
        3) server_settings, custom object defined by admins, can be redefined for each game version separately
     """
 
-    def __init__(self, gamespace, room_id, settings):
-        self.gamespace = gamespace
+    def __init__(self, room_id, settings):
         self.settings = settings
-        self.room_id = room_id
+        self.room_id = str(room_id)
         self.internal = Internal()
 
         # special handles to support on special notify events
@@ -92,16 +93,14 @@ class Room(object):
         try:
             @retry(operation="notify room {0} action {1}".format(self.id(), method), max=5, delay=10,
                    predicate=Room.__notify_retry_predicate__)
-            def do_try(room_id, gamespace):
-                return self.internal.request(
-                    "game", "controller_action",
-                    room_id=room_id,
-                    action=method,
-                    gamespace=gamespace,
-                    args=args,
-                    kwargs=kwargs)
+            async def do_try(room_id):
+                timer = ElapsedTime("controller notify {0}".format(method))
+                try:
+                    return await Server.instance().master.notify(room_id, method, *args, **kwargs)
+                finally:
+                    logging.info(timer.done())
 
-            result = await do_try(self.id(), self.gamespace)
+            result = await do_try(self.id())
 
         except InternalError as e:
             logging.error("Failed to notify an action: " + str(e.code) + ": " + e.body)
@@ -146,10 +145,10 @@ class GameServersControllerModel(Model):
         self.logs_max_file_size = logs_max_file_size
 
         if not os.path.isdir(self.binaries_path):
-            os.mkdir(self.binaries_path)
+            os.makedirs(self.binaries_path, exist_ok=True)
 
         if not os.path.isdir(self.logs_path):
-            os.mkdir(self.logs_path)
+            os.makedirs(self.logs_path, exist_ok=True)
 
         self.clear_logs_cb = PeriodicCallback(self.__clear_logs__, 300000)
 
@@ -220,10 +219,10 @@ class GameServersControllerModel(Model):
         """
         return self.rooms.get(room_id, None)
 
-    def create_new_room(self, gamespace, room_id, settings):
+    def create_new_room(self, room_id, settings):
         logging.info("New room: " + str(room_id))
 
-        room = Room(gamespace, room_id, settings)
+        room = Room(room_id, settings)
         self.rooms[room_id] = room
         return room
 
@@ -246,11 +245,11 @@ class GameServersControllerModel(Model):
     async def server_updated(self, server):
         self.pub.notify("server_updated", server=server)
 
-    async def spawn(self, gamespace, room_id, settings, game_name, game_version, game_server_name, deployment):
+    async def spawn(self, room_id, settings, game_name, game_version, game_server_name, deployment):
         name = game_name + "_" + game_server_name + "_" + str(room_id)
 
         # register a new room
-        room = self.create_new_room(gamespace, room_id, settings)
+        room = self.create_new_room(room_id, settings)
 
         game_settings = room.game_settings()
 
@@ -271,7 +270,14 @@ class GameServersControllerModel(Model):
         instance = await self.instantiate(name, game_name, game_version, game_server_name, deployment, room)
 
         app_path = os.path.join(self.binaries_path, GameServersControllerModel.RUNTIME, game_name, game_version, deployment)
-        
+
+        if not os.path.isdir(app_path):
+            logging.info(u"Path {0} does not exist (not yet deployed), trying to download...".format(app_path))
+            try:
+                await self.app.master.download_deployment(game_name, game_version, deployment)
+            except Exception:
+                raise gameserver.SpawnError("Cannot download deployment {0} (not deployed)".format(app_path))
+
         sock_name = str(os.getpid()) + "_" + name
 
         if unix_domain_sockets_enabled():

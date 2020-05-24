@@ -1,8 +1,8 @@
 
-from setuptools import setup, find_packages
+from setuptools import setup, find_namespace_packages
 
 DEPENDENCIES = [
-    "anthill-common"
+    "anthill-common>=0.2.4"
 ]
 
 setup(
@@ -10,8 +10,7 @@ setup(
     package_data={
       "anthill.game.controller": ["anthill/game/controller/sql", "anthill/game/controller/static"]
     },
-    setup_requires=["pypigit-version"],
-    git_version="0.1.0",
+    version='0.2.5',
     description='Game servers hosting & matchmaking service for Anthill platform Edit Add topics',
     author='desertkun',
     license='MIT',
@@ -19,7 +18,7 @@ setup(
     url='https://github.com/anthill-platform/anthill-game-controller',
     namespace_packages=["anthill"],
     include_package_data=True,
-    packages=find_packages(),
+    packages=find_namespace_packages(include=["anthill.*"]),
     zip_safe=False,
     install_requires=DEPENDENCIES
 )

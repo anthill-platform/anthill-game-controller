@@ -1,6 +1,7 @@
 
 from anthill.common.options import define
 import os
+import platform
 
 # Main
 define("api_version",
@@ -25,8 +26,8 @@ define("discovery_service",
        type=str)
 
 define("gs_host",
-       default="localhost",
-       help="Public hostname without protocol and port (for application usage)",
+       default=platform.uname()[1],
+       help="Public hostname without protocol and port (for application usage), by default resolved to the hostname",
        type=str)
 
 define("name",

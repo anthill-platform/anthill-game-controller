@@ -1,7 +1,8 @@
 # Game Controller
 Game Controller is a second part of Game Service. 
 
-This project is docker-ready. To install it on any host, install docker first, then create this Dockerfile:
+Unlike other projects of the platform, this project uses Docker.
+To install it on any host, install docker first, then create this Dockerfile:
 ```dockerfile
 FROM python:3.6-alpine
 RUN apk add --no-cache python3-dev openssl-dev libffi-dev musl-dev make gcc g++ zeromq zeromq-dev curl libtool autoconf automake
@@ -13,8 +14,7 @@ CMD [ "python", \
     "--auth-key-public=anthill.pub", \
     "--discovery-service=https://<your public discovery service>", \
     "--connection-username=<username>", \
-    "--connection-gamespace=<gamespace-alias>", \
-    "--gs-host=<host ip>"]
+    "--connection-gamespace=<gamespace-alias>"]
 ```
 
 Make sure to pup `anthill.pub` next to it. Then run:
@@ -24,11 +24,15 @@ docker build -t anthill-game-controller .
 
 Once the image is built, run it:
 ```bash
-docker run -d --name anthill-game-controller --network host --restart=always -i \
+docker run -d --name anthill-game-controller \
+    --network host --hostname `hostname` --restart=always -i \
     -v /var/log/gameserver:/var/log/gameserver \
     -v /usr/local/anthill:/usr/local/anthill \
     anthill-game-controller
 ```
+
+You now can see logs via `docker logs --follow <container-id>`.
+Logs for the game servers themselves can bee seen on `/var/log/gameserver`.
 
 See <a href="https://github.com/anthill-platform/anthill-game-master#game-service">Game Service</a> for more information.
 

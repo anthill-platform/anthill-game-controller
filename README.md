@@ -4,12 +4,11 @@ Game Controller is a second part of Game Service.
 Unlike other projects of the platform, this project uses Docker.
 To install it on any host, install docker first, then create this Dockerfile:
 ```dockerfile
-FROM python:3.6-alpine
-RUN apk add --no-cache python3-dev openssl-dev libffi-dev musl-dev make gcc g++ zeromq zeromq-dev curl libtool autoconf automake
-RUN pip install --no-cache-dir anthill-game-controller
-COPY anthill.pub ./
+FROM anthillplatform/game-controller:latest
+... extra deps for your game you might be having ...
+COPY brainout/anthill.pub ./
 ENV connection_password=<password>
-CMD [ "python", \
+ENTRYPOINT [ "python", \
     "-m", "anthill.game.controller.server", \
     "--auth-key-public=anthill.pub", \
     "--discovery-service=https://<your public discovery service>", \

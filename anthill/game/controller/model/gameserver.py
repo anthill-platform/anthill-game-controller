@@ -41,7 +41,7 @@ class GameServer(object):
     STATUS_ERROR = "error"
     STATUS_NONE = "none"
 
-    SPAWN_TIMEOUT = 30
+    SPAWN_TIMEOUT = 60
     TERMINATE_TIMEOUT = 5
     CHECK_PERIOD = 60
     READ_PERIOD_MS = 200
@@ -386,8 +386,11 @@ class GameServer(object):
             self.init_future = None
 
     async def send_stdin(self, data):
-        self.pipe.stdin.write(data.encode('ascii', 'ignore') + b"\n")
-        self.pipe.stdin.flush()
+        if os.name == "nt":
+            self.pipe.stdin.write(data.encode('ascii', 'ignore') + b"\n")
+            self.pipe.stdin.flush()
+        else:
+            await self.pipe.stdin.write(data.encode('ascii', 'ignore') + b"\n")
 
     # noinspection PyBroadException
     @run_on_executor

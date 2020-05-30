@@ -10,7 +10,7 @@ setup(
     package_data={
       "anthill.game.controller": ["anthill/game/controller/sql", "anthill/game/controller/static"]
     },
-    version='0.2.6',
+    version='0.2.8',
     description='Game servers hosting & matchmaking service for Anthill platform Edit Add topics',
     author='desertkun',
     license='MIT',

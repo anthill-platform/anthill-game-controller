@@ -1,0 +1,17 @@
+services:
+  - docker
+sudo: true
+dist: "bionic"
+addons:
+  apt:
+    packages:
+      - "python3"
+      - "python3-pip"
+install:
+  - sudo pip3 install -U setuptools
+  - docker build -t anthillplatform/game-controller .
+  - docker tag anthillplatform/game-controller:latest anthillplatform/game-controller:$(python3 $TRAVIS_BUILD_DIR/setup.py --version)
+script:
+  - echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+  - docker push anthillplatform/game-controller
+  - docker push anthillplatform/game-controller:$(python3 $TRAVIS_BUILD_DIR/setup.py --version)

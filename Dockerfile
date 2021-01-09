@@ -1,5 +1,4 @@
-FROM python:3.6-alpine
-RUN apk add --no-cache python3-dev openssl-dev libffi-dev musl-dev make gcc g++ zeromq zeromq-dev curl libtool autoconf automake
+FROM anthillplatform/anthill-common:latest
 WORKDIR /tmp
 COPY anthill /tmp/anthill
 COPY setup.py /tmp

@@ -53,6 +53,7 @@ class MasterConnectionModel(Model):
         self.session_token = None
         self.session_connection = None
         self.session_rpc = None
+        self.postponed_messages = []
         self.relogin_timeout = None
 
     async def login(self):
@@ -110,6 +111,9 @@ class MasterConnectionModel(Model):
         IOLoop.current().spawn_callback(self.session_connect)
 
     def session_message(self, message):
+        if self.session_rpc is None:
+            self.postponed_messages.append(message)
+            return
         if message is None:
             IOLoop.current().spawn_callback(self.reconnect)
             return
@@ -145,6 +149,11 @@ class MasterConnectionModel(Model):
         logging.info("Connected to Game Master")
         self.session_rpc = MasterConnectionJsonRPC(self.session_connection)
         self.session_rpc.set_receive(self._on_message)
+
+        if self.postponed_messages:
+            for message in self.postponed_messages:
+                self.session_message(message)
+            self.postponed_messages = []
 
     async def _on_message(self, context, method, *args, **kwargs):
         full_name = "on_" + method + "_received"
